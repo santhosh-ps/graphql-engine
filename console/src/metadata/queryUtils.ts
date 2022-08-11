@@ -30,6 +30,7 @@ export const metadataQueryTypes = [
   'track_table',
   'untrack_table',
   'set_table_is_enum',
+  'set_apollo_federation_config',
   'track_function',
   'untrack_function',
   'create_object_relationship',
@@ -343,6 +344,19 @@ export const getSetTableEnumQuery = (
   return getMetadataQuery('set_table_is_enum', source, {
     table: tableDef,
     is_enum: isEnum,
+  });
+};
+
+export const getSetTableApolloFederationQuery = (
+  tableDef: QualifiedTable,
+  isApolloFederationSupported: boolean,
+  source: string
+) => {
+  return getMetadataQuery('set_apollo_federation_config', source, {
+    table: tableDef,
+    apollo_federation_config: isApolloFederationSupported
+      ? { enable: 'v1' }
+      : null,
   });
 };
 
@@ -948,24 +962,21 @@ export const dropRESTEndpointQuery = (name: string) => ({
   args: { name },
 });
 
-const getMetadataQueryForRemoteSchema = (queryName: 'add' | 'update') => (
-  name: string,
-  definition: RemoteSchemaDef,
-  comment?: string
-) => ({
-  type: `${queryName}_remote_schema` as MetadataQueryType,
-  args: {
-    name,
-    definition,
-    comment: comment ?? null,
-  },
-});
+const getMetadataQueryForRemoteSchema =
+  (queryName: 'add' | 'update') =>
+  (name: string, definition: RemoteSchemaDef, comment?: string) => ({
+    type: `${queryName}_remote_schema` as MetadataQueryType,
+    args: {
+      name,
+      definition,
+      comment: comment ?? null,
+    },
+  });
 
 export const addRemoteSchemaQuery = getMetadataQueryForRemoteSchema('add');
 
-export const updateRemoteSchemaQuery = getMetadataQueryForRemoteSchema(
-  'update'
-);
+export const updateRemoteSchemaQuery =
+  getMetadataQueryForRemoteSchema('update');
 
 export const removeRemoteSchemaQuery = (name: string) => ({
   type: 'remove_remote_schema',

@@ -94,12 +94,11 @@ const RootFieldsEditor = ({
       ? [renderCustomRootFieldLabel('custom_table_name', existingCustomName)]
       : [];
 
-    const existingRootFieldLabels = Object.entries(
-      existingRootFields
-    ).map(([rootField, customRootField]) =>
-      customRootField === null
-        ? []
-        : [renderCustomRootFieldLabel(rootField, customRootField)]
+    const existingRootFieldLabels = Object.entries(existingRootFields).map(
+      ([rootField, customRootField]) =>
+        customRootField === null
+          ? []
+          : [renderCustomRootFieldLabel(rootField, customRootField)]
     );
 
     const allLabels = customNameLabel.concat(...existingRootFieldLabels);
@@ -120,6 +119,7 @@ const RootFieldsEditor = ({
       selectOnChange={onRootFieldChange('select')}
       selectByPkOnChange={onRootFieldChange('select_by_pk')}
       selectAggOnChange={onRootFieldChange('select_aggregate')}
+      selectStreamOnChange={onRootFieldChange('select_stream')}
       insertOnChange={onRootFieldChange('insert')}
       insertOneOnChange={onRootFieldChange('insert_one')}
       updateOnChange={onRootFieldChange('update')}

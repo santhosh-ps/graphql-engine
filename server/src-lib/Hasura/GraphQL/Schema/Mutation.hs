@@ -16,7 +16,6 @@ import Data.Has (getter)
 import Data.HashMap.Strict qualified as Map
 import Data.HashSet qualified as Set
 import Data.Text.Extended
-import Hasura.GraphQL.Parser.Class
 import Hasura.GraphQL.Schema.Backend
 import Hasura.GraphQL.Schema.BoolExp
 import Hasura.GraphQL.Schema.Common
@@ -73,13 +72,15 @@ insertIntoTable ::
 insertIntoTable backendInsertAction scenario sourceInfo tableInfo fieldName description = runMaybeT $ do
   let viewInfo = _tciViewInfo $ _tiCoreInfo tableInfo
   guard $ isMutable viIsInsertable viewInfo
-  insertPerms <- MaybeT $ _permIns <$> tablePermissions tableInfo
+  roleName <- retrieve scRole
+  let permissions = getRolePermInfo roleName tableInfo
+  insertPerms <- hoistMaybe $ _permIns permissions
   -- If we're in a frontend scenario, we should not include backend_only inserts
   -- For more info see Note [Backend only permissions]
   guard $ not $ scenario == Frontend && ipiBackendOnly insertPerms
   tCase <- asks getter
   lift do
-    updatePerms <- _permUpd <$> tablePermissions tableInfo
+    let updatePerms = _permUpd permissions
     -- objects [{ ... }]
     objectParser <- tableFieldsInput sourceInfo tableInfo
     backendInsertParser <- backendInsertAction sourceInfo tableInfo
@@ -122,14 +123,16 @@ insertOneIntoTable ::
 insertOneIntoTable backendInsertAction scenario sourceInfo tableInfo fieldName description = runMaybeT do
   let viewInfo = _tciViewInfo $ _tiCoreInfo tableInfo
   guard $ isMutable viIsInsertable viewInfo
-  insertPerms <- MaybeT $ _permIns <$> tablePermissions tableInfo
+  roleName <- retrieve scRole
+  let permissions = getRolePermInfo roleName tableInfo
+  insertPerms <- hoistMaybe $ _permIns permissions
   -- If we're in a frontend scenario, we should not include backend_only inserts
   -- For more info see Note [Backend only permissions]
   guard $ not $ scenario == Frontend && ipiBackendOnly insertPerms
   selectionParser <- MaybeT $ tableSelectionSet sourceInfo tableInfo
   tCase <- asks getter
   lift do
-    updatePerms <- _permUpd <$> tablePermissions tableInfo
+    let updatePerms = _permUpd permissions
     objectParser <- tableFieldsInput sourceInfo tableInfo
     backendInsertParser <- backendInsertAction sourceInfo tableInfo
     let argsParser = do
@@ -170,7 +173,7 @@ tableFieldsInput ::
   TableInfo b ->
   m (Parser 'Input n (IR.AnnotatedInsertRow b (IR.UnpreparedValue b)))
 tableFieldsInput sourceInfo tableInfo =
-  memoizeOn 'tableFieldsInput (_siName sourceInfo, tableName) do
+  P.memoizeOn 'tableFieldsInput (_siName sourceInfo, tableName) do
     tableGQLName <- getTableGQLName tableInfo
     objectFields <- traverse mkFieldParser (Map.elems allFields)
     objectName <- mkTypename $ tableGQLName <> Name.__insert_input
@@ -206,7 +209,8 @@ tableFieldsInput sourceInfo tableInfo =
       ColumnInfo b ->
       m (Maybe (InputFieldsParser n (Maybe (IR.AnnotatedInsertField b (IR.UnpreparedValue b)))))
     mkColumnParser columnInfo = runMaybeT $ do
-      insertPerms <- MaybeT $ _permIns <$> tablePermissions tableInfo
+      roleName <- retrieve scRole
+      insertPerms <- hoistMaybe $ _permIns $ getRolePermInfo roleName tableInfo
       let columnName = ciName columnInfo
           columnDesc = ciDescription columnInfo
           isAllowed = Set.member (ciColumn columnInfo) (ipiCols insertPerms)
@@ -259,10 +263,11 @@ objectRelationshipInput ::
   TableInfo b ->
   m (Maybe (Parser 'Input n (IR.SingleObjectInsert b (IR.UnpreparedValue b))))
 objectRelationshipInput backendInsertAction sourceInfo tableInfo = runMaybeT $ do
-  insertPerms <- MaybeT $ _permIns <$> tablePermissions tableInfo
-  lift $ memoizeOn 'objectRelationshipInput (_siName sourceInfo, tableName) do
-    updatePerms <- _permUpd <$> tablePermissions tableInfo
-    _selectPerms <- _permSel <$> tablePermissions tableInfo
+  roleName <- retrieve scRole
+  let permissions = getRolePermInfo roleName tableInfo
+      updatePerms = _permUpd permissions
+  insertPerms <- hoistMaybe $ _permIns permissions
+  lift $ P.memoizeOn 'objectRelationshipInput (_siName sourceInfo, tableName) do
     tableGQLName <- getTableGQLName tableInfo
     objectParser <- tableFieldsInput sourceInfo tableInfo
     backendInsertParser <- backendInsertAction sourceInfo tableInfo
@@ -292,10 +297,11 @@ arrayRelationshipInput ::
   TableInfo b ->
   m (Maybe (Parser 'Input n (IR.MultiObjectInsert b (IR.UnpreparedValue b))))
 arrayRelationshipInput backendInsertAction sourceInfo tableInfo = runMaybeT $ do
-  insertPerms <- MaybeT $ _permIns <$> tablePermissions tableInfo
-  lift $ memoizeOn 'arrayRelationshipInput (_siName sourceInfo, tableName) do
-    updatePerms <- _permUpd <$> tablePermissions tableInfo
-    _selectPerms <- _permSel <$> tablePermissions tableInfo
+  roleName <- retrieve scRole
+  let permissions = getRolePermInfo roleName tableInfo
+      updatePerms = _permUpd permissions
+  insertPerms <- hoistMaybe $ _permIns permissions
+  lift $ P.memoizeOn 'arrayRelationshipInput (_siName sourceInfo, tableName) do
     tableGQLName <- getTableGQLName tableInfo
     objectParser <- tableFieldsInput sourceInfo tableInfo
     backendInsertParser <- backendInsertAction sourceInfo tableInfo
@@ -358,7 +364,8 @@ deleteFromTable ::
 deleteFromTable scenario sourceInfo tableInfo fieldName description = runMaybeT $ do
   let viewInfo = _tciViewInfo $ _tiCoreInfo tableInfo
   guard $ isMutable viIsInsertable viewInfo
-  deletePerms <- MaybeT $ _permDel <$> tablePermissions tableInfo
+  roleName <- retrieve scRole
+  deletePerms <- hoistMaybe $ _permDel $ getRolePermInfo roleName tableInfo
   -- If we're in a frontend scenario, we should not include backend_only deletes
   -- For more info see Note [Backend only permissions]
   guard $ not $ scenario == Frontend && dpiBackendOnly deletePerms
@@ -394,7 +401,8 @@ deleteFromTableByPk scenario sourceInfo tableInfo fieldName description = runMay
   let viewInfo = _tciViewInfo $ _tiCoreInfo tableInfo
   guard $ isMutable viIsInsertable viewInfo
   pkArgs <- MaybeT $ primaryKeysArguments tableInfo
-  deletePerms <- MaybeT $ _permDel <$> tablePermissions tableInfo
+  roleName <- retrieve scRole
+  deletePerms <- hoistMaybe $ _permDel $ getRolePermInfo roleName tableInfo
   -- If we're in a frontend scenario, we should not include backend_only deletes
   -- For more info see Note [Backend only permissions]
   guard $ not $ scenario == Frontend && dpiBackendOnly deletePerms
@@ -436,10 +444,11 @@ mutationSelectionSet ::
   TableInfo b ->
   m (Parser 'Output n (IR.MutFldsG b (IR.RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue b)))
 mutationSelectionSet sourceInfo tableInfo =
-  memoizeOn 'mutationSelectionSet (_siName sourceInfo, tableName) do
+  P.memoizeOn 'mutationSelectionSet (_siName sourceInfo, tableName) do
+    roleName <- retrieve scRole
     tableGQLName <- getTableGQLName tableInfo
     returning <- runMaybeT do
-      _permissions <- MaybeT $ tableSelectPermissions tableInfo
+      _permissions <- hoistMaybe $ tableSelectPermissions roleName tableInfo
       tableSet <- MaybeT $ tableSelectionList sourceInfo tableInfo
       let returningName = Name._returning
           returningDesc = "data from the rows affected by the mutation"
@@ -473,7 +482,8 @@ primaryKeysArguments ::
   TableInfo b ->
   m (Maybe (InputFieldsParser n (AnnBoolExp b (IR.UnpreparedValue b))))
 primaryKeysArguments tableInfo = runMaybeT $ do
-  selectPerms <- MaybeT $ tableSelectPermissions tableInfo
+  roleName <- retrieve scRole
+  selectPerms <- hoistMaybe $ tableSelectPermissions roleName tableInfo
   primaryKeys <- hoistMaybe $ _tciPrimaryKey . _tiCoreInfo $ tableInfo
   let columns = _pkColumns primaryKeys
   guard $ all (\c -> ciColumn c `Map.member` spiCols selectPerms) columns

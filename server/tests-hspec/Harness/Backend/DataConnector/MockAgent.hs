@@ -23,6 +23,9 @@ data MockConfig = MockConfig
     _queryResponse :: API.QueryRequest -> API.QueryResponse
   }
 
+mkTableName :: Text -> API.TableName
+mkTableName = API.TableName . (:| [])
+
 -- | Stock Capabilities for a Chinook Agent
 capabilities :: API.CapabilitiesResponse
 capabilities =
@@ -62,7 +65,7 @@ schema =
   API.SchemaResponse
     { API.srTables =
         [ API.TableInfo
-            { API.dtiName = API.TableName "Artist",
+            { API.dtiName = mkTableName "Artist",
               API.dtiColumns =
                 [ API.ColumnInfo
                     { API.dciName = API.ColumnName "ArtistId",
@@ -73,7 +76,7 @@ schema =
                   API.ColumnInfo
                     { API.dciName = API.ColumnName "Name",
                       API.dciType = API.StringTy,
-                      API.dciNullable = False,
+                      API.dciNullable = True,
                       API.dciDescription = Just "The name of the artist"
                     }
                 ],
@@ -81,7 +84,7 @@ schema =
               API.dtiDescription = Just "Collection of artists of music"
             },
           API.TableInfo
-            { API.dtiName = API.TableName "Album",
+            { API.dtiName = mkTableName "Album",
               API.dtiColumns =
                 [ API.ColumnInfo
                     { API.dciName = API.ColumnName "AlbumId",
@@ -106,7 +109,7 @@ schema =
               API.dtiDescription = Just "Collection of music albums created by artists"
             },
           API.TableInfo
-            { API.dtiName = API.TableName "Genre",
+            { API.dtiName = mkTableName "Genre",
               API.dtiColumns =
                 [ API.ColumnInfo
                     { API.dciName = API.ColumnName "GenreId",
@@ -125,7 +128,105 @@ schema =
               API.dtiDescription = Just "Genres of music"
             },
           API.TableInfo
-            { API.dtiName = API.TableName "MediaType",
+            { API.dtiName = mkTableName "Invoice",
+              API.dtiColumns =
+                [ API.ColumnInfo
+                    { API.dciName = API.ColumnName "InvoiceId",
+                      API.dciType = API.NumberTy,
+                      API.dciNullable = False,
+                      API.dciDescription = Just "Invoice primary key identifier"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "CustomerId",
+                      API.dciType = API.NumberTy,
+                      API.dciNullable = False,
+                      API.dciDescription = Just "ID of the customer who bought the music"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "InvoiceDate",
+                      API.dciType = API.StringTy,
+                      API.dciNullable = False,
+                      API.dciDescription = Just "Date of the invoice"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "BillingAddress",
+                      API.dciType = API.StringTy,
+                      API.dciNullable = True,
+                      API.dciDescription = Just "The invoice's billing address line (street number, street)"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "BillingCity",
+                      API.dciType = API.StringTy,
+                      API.dciNullable = True,
+                      API.dciDescription = Just "The invoice's billing address city"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "BillingState",
+                      API.dciType = API.StringTy,
+                      API.dciNullable = True,
+                      API.dciDescription = Just "The invoice's billing address state"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "BillingCountry",
+                      API.dciType = API.StringTy,
+                      API.dciNullable = True,
+                      API.dciDescription = Just "The invoice's billing address country"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "BillingPostalCode",
+                      API.dciType = API.StringTy,
+                      API.dciNullable = True,
+                      API.dciDescription = Just "The invoice's billing address postal code"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "Total",
+                      API.dciType = API.NumberTy,
+                      API.dciNullable = False,
+                      API.dciDescription = Just "The total amount due on the invoice"
+                    }
+                ],
+              API.dtiPrimaryKey = Just [API.ColumnName "InvoiceId"],
+              API.dtiDescription = Just "Collection of invoices of music purchases by a customer"
+            },
+          API.TableInfo
+            { API.dtiName = mkTableName "InvoiceLine",
+              API.dtiColumns =
+                [ API.ColumnInfo
+                    { API.dciName = API.ColumnName "InvoiceLineId",
+                      API.dciType = API.NumberTy,
+                      API.dciNullable = False,
+                      API.dciDescription = Just "Invoice Line primary key identifier"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "InvoiceId",
+                      API.dciType = API.NumberTy,
+                      API.dciNullable = False,
+                      API.dciDescription = Just "ID of the invoice the line belongs to"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "TrackId",
+                      API.dciType = API.NumberTy,
+                      API.dciNullable = False,
+                      API.dciDescription = Just "ID of the music track being purchased"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "UnitPrice",
+                      API.dciType = API.NumberTy,
+                      API.dciNullable = False,
+                      API.dciDescription = Just "Price of each individual track unit"
+                    },
+                  API.ColumnInfo
+                    { API.dciName = API.ColumnName "Quantity",
+                      API.dciType = API.NumberTy,
+                      API.dciNullable = False,
+                      API.dciDescription = Just "Quantity of the track purchased"
+                    }
+                ],
+              API.dtiPrimaryKey = Just [API.ColumnName "InvoiceLineId"],
+              API.dtiDescription = Just "Collection of track purchasing line items of invoices"
+            },
+          API.TableInfo
+            { API.dtiName = mkTableName "MediaType",
               API.dtiColumns =
                 [ API.ColumnInfo
                     { API.dciName = API.ColumnName "MediaTypeId",
@@ -144,7 +245,7 @@ schema =
               API.dtiDescription = Just "Collection of media types that tracks can be encoded in"
             },
           API.TableInfo
-            { API.dtiName = API.TableName "Track",
+            { API.dtiName = mkTableName "Track",
               API.dtiColumns =
                 [ API.ColumnInfo
                     { API.dciName = API.ColumnName "TrackId",
@@ -167,7 +268,7 @@ schema =
                   API.ColumnInfo
                     { API.dciName = API.ColumnName "MediaTypeId",
                       API.dciType = API.NumberTy,
-                      API.dciNullable = True,
+                      API.dciNullable = False,
                       API.dciDescription = Just "The ID of the media type the track is encoded with"
                     },
                   API.ColumnInfo
@@ -197,7 +298,7 @@ schema =
                   API.ColumnInfo
                     { API.dciName = API.ColumnName "UnitPrice",
                       API.dciType = API.NumberTy,
-                      API.dciNullable = True,
+                      API.dciNullable = False,
                       API.dciDescription = Just "The price of the track"
                     }
                 ],

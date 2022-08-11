@@ -19,6 +19,8 @@ module Harness.Backend.DataConnector
     mkLocalTestEnvironmentMock,
     setupMock,
     teardownMock,
+    setupFixtureAction,
+    setupMockAction,
   )
 where
 
@@ -31,9 +33,10 @@ import Data.IORef qualified as I
 import Harness.Backend.DataConnector.MockAgent
 import Harness.GraphqlEngine qualified as GraphqlEngine
 import Harness.Http (healthCheck)
-import Harness.Quoter.Yaml (shouldReturnYaml, yaml)
-import Harness.Test.Context (BackendType (DataConnector), Options, defaultBackendTypeString)
+import Harness.Quoter.Yaml (yaml)
+import Harness.Test.Fixture (BackendType (DataConnector), Options, SetupAction (..), defaultBackendTypeString)
 import Harness.TestEnvironment (TestEnvironment)
+import Harness.Yaml (shouldReturnYaml)
 import Hasura.Backends.DataConnector.API qualified as API
 import Hasura.Prelude
 import Test.Hspec (shouldBe)
@@ -61,6 +64,12 @@ dataconnector:
 
 --------------------------------------------------------------------------------
 -- Chinook Agent
+
+setupFixtureAction :: Aeson.Value -> Aeson.Value -> TestEnvironment -> SetupAction
+setupFixtureAction sourceMetadata backendConfig testEnv =
+  SetupAction
+    (setupFixture sourceMetadata backendConfig (testEnv, ()))
+    (const $ teardown (testEnv, ()))
 
 -- | Setup the schema given source metadata and backend config.
 setupFixture :: Aeson.Value -> Aeson.Value -> (TestEnvironment, ()) -> IO ()
@@ -123,6 +132,12 @@ mkLocalTestEnvironmentMock _ = do
   maeThread <- Async.async $ runMockServer maeConfig maeQuery maeQueryConfig
   healthCheck $ "http://127.0.0.1:" <> show mockAgentPort <> "/health"
   pure $ MockAgentEnvironment {..}
+
+setupMockAction :: Aeson.Value -> Aeson.Value -> (TestEnvironment, MockAgentEnvironment) -> SetupAction
+setupMockAction sourceMetadata backendConfig testEnv =
+  SetupAction
+    (setupMock sourceMetadata backendConfig testEnv)
+    (const $ teardownMock testEnv)
 
 -- | Load the agent schema into HGE.
 setupMock :: Aeson.Value -> Aeson.Value -> (TestEnvironment, MockAgentEnvironment) -> IO ()

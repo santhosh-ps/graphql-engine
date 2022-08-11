@@ -1,10 +1,11 @@
-import { SchemaResponse } from "../types"
+import { SchemaResponse, TableName } from "../types"
 import { Config } from "../config";
 import xml2js from "xml2js"
 import fs from "fs"
 import stream from "stream"
 import zlib from "zlib"
 import { parseNumbers } from "xml2js/lib/processors";
+import { tableNameEquals } from "../util";
 
 export type StaticData = {
   [tableName: string]: Record<string, string | number | boolean | null>[]
@@ -18,26 +19,50 @@ const streamToBuffer = async (stream : stream.Readable) : Promise<Buffer> => {
   return Buffer.concat(chunks);
 }
 
+// Only parse numeric columns as numbers, otherwise you get "number-like" columns like BillingPostCode
+// getting partially parsed as a number or a string depending on the individual postcode
+const parseNumbersInNumericColumns = (schema: SchemaResponse) => {
+  const numericColumns = new Set(schema.tables.flatMap(table => table.columns.filter(c => c.type === "number").map(c => c.name)));
+
+  return (value: string, name: string): any => {
+    return numericColumns.has(name)
+      ? parseNumbers(value)
+      : value;
+  };
+}
+
 export const loadStaticData = async (): Promise<StaticData> => {
   const gzipReadStream = fs.createReadStream(__dirname + "/ChinookData.xml.gz");
   const unzipStream = stream.pipeline(gzipReadStream, zlib.createGunzip(), () => {});
   const xmlStr = (await streamToBuffer(unzipStream)).toString("utf16le");
-  const xml = await xml2js.parseStringPromise(xmlStr, { explicitArray: false, valueProcessors: [parseNumbers] });
+  const xml = await xml2js.parseStringPromise(xmlStr, { explicitArray: false, emptyTag: () => null, valueProcessors: [parseNumbersInNumericColumns(schema)] });
   const data = xml.ChinookDataSet;
   delete data["$"]; // Remove XML namespace property
   return await data as StaticData;
 }
 
-export const filterAvailableTables = (staticData: StaticData, config : Config): StaticData => {
+export const filterAvailableTables = (staticData: StaticData, config: Config): StaticData => {
   return Object.fromEntries(
     Object.entries(staticData).filter(([name, _]) => config.tables === null ? true : config.tables.indexOf(name) >= 0)
   );
 }
 
+export const getTable = (staticData: StaticData, config: Config) => (tableName: TableName): Record<string, string | number | boolean | null>[] | undefined => {
+  if (config.schema) {
+    return tableName.length === 2 && tableName[0] === config.schema
+      ? staticData[tableName[1]]
+      : undefined;
+  } else {
+    return tableName.length === 1
+      ? staticData[tableName[0]]
+      : undefined;
+  }
+}
+
 const schema: SchemaResponse = {
   tables: [
     {
-      name: "Artist",
+      name: ["Artist"],
       primary_key: ["ArtistId"],
       description: "Collection of artists of music",
       columns: [
@@ -56,7 +81,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "Album",
+      name: ["Album"],
       primary_key: ["AlbumId"],
       description: "Collection of music albums created by artists",
       columns: [
@@ -81,7 +106,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "Customer",
+      name: ["Customer"],
       primary_key: ["CustomerId"],
       description: "Collection of customers who can buy tracks",
       columns: [
@@ -166,7 +191,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "Employee",
+      name: ["Employee"],
       primary_key: ["EmployeeId"],
       description: "Collection of employees who work for the business",
       columns: [
@@ -210,7 +235,7 @@ const schema: SchemaResponse = {
           name: "HireDate",
           type: "string", // Ought to be DateTime but we don't have a type for this yet
           nullable: true,
-          description: "The employee's birth date"
+          description: "The employee's hire date"
         },
         {
           name: "Address",
@@ -263,7 +288,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "Genre",
+      name: ["Genre"],
       primary_key: ["GenreId"],
       description: "Genres of music",
       columns: [
@@ -282,7 +307,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "Invoice",
+      name: ["Invoice"],
       primary_key: ["InvoiceId"],
       description: "Collection of invoices of music purchases by a customer",
       columns: [
@@ -343,7 +368,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "InvoiceLine",
+      name: ["InvoiceLine"],
       primary_key: ["InvoiceLineId"],
       description: "Collection of track purchasing line items of invoices",
       columns: [
@@ -380,7 +405,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "MediaType",
+      name: ["MediaType"],
       primary_key: ["MediaTypeId"],
       description: "Collection of media types that tracks can be encoded in",
       columns: [
@@ -399,7 +424,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "Playlist",
+      name: ["Playlist"],
       primary_key: ["PlaylistId"],
       description: "Collection of playlists",
       columns: [
@@ -418,7 +443,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "PlaylistTrack",
+      name: ["PlaylistTrack"],
       primary_key: ["PlaylistId", "TrackId"],
       description: "Associations between playlists and tracks",
       columns: [
@@ -437,7 +462,7 @@ const schema: SchemaResponse = {
       ]
     },
     {
-      name: "Track",
+      name: ["Track"],
       primary_key: ["TrackId"],
       description: "Collection of music tracks",
       columns: [
@@ -501,8 +526,22 @@ const schema: SchemaResponse = {
 };
 
 export const getSchema = (config: Config): SchemaResponse => {
+  const prefixSchemaToTableName = (tableName: TableName) =>
+    config.schema
+      ? [config.schema, ...tableName]
+      : tableName;
+
+  const filteredTables = schema.tables.filter(table =>
+    config.tables === null ? true : config.tables.map(n => [n]).find(tableNameEquals(table.name)) !== undefined
+  );
+
+  const prefixedTables = filteredTables.map(table => ({
+    ...table,
+    name: prefixSchemaToTableName(table.name),
+  }));
+
   return {
     ...schema,
-    tables: schema.tables.filter(table => config.tables === null ? true : config.tables.indexOf(table.name) >= 0)
+    tables: prefixedTables
   };
 };

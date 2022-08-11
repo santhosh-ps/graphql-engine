@@ -49,8 +49,8 @@ import Hasura.SQL.Types
 import Hasura.Session
 
 data MutateResp (b :: BackendType) a = MutateResp
-  { _mrAffectedRows :: !Int,
-    _mrReturningColumns :: ![ColumnValues b a]
+  { _mrAffectedRows :: Int,
+    _mrReturningColumns :: [ColumnValues b a]
   }
   deriving (Generic)
 
@@ -65,12 +65,12 @@ instance (Backend b, FromJSON a) => FromJSON (MutateResp b a) where
   parseJSON = genericParseJSON hasuraJSON
 
 data Mutation (b :: BackendType) = Mutation
-  { _mTable :: !QualifiedTable,
-    _mQuery :: !(MutationCTE, DS.Seq Q.PrepArg),
-    _mOutput :: !(MutationOutput b),
-    _mCols :: ![ColumnInfo b],
-    _mStrfyNum :: !Options.StringifyNumbers,
-    _mNamingConvention :: !(Maybe NamingCase)
+  { _mTable :: QualifiedTable,
+    _mQuery :: (MutationCTE, DS.Seq Q.PrepArg),
+    _mOutput :: MutationOutput b,
+    _mCols :: [ColumnInfo b],
+    _mStrfyNum :: Options.StringifyNumbers,
+    _mNamingConvention :: Maybe NamingCase
   }
 
 mkMutation ::
@@ -242,8 +242,8 @@ executeMutationOutputQuery qt allCols preCalAffRows cte mutOutput strfyNum tCase
         liftTx (Q.rawQE dmlTxErrorHandler queryWithQueryTags prepArgs False)
 
   if checkPermissionRequired cte
-    then withCheckPermission $ Q.getRow <$> queryTx
-    else (runIdentity . Q.getRow) <$> queryTx
+    then withCheckPermission $ first encJFromBS . Q.getRow <$> queryTx
+    else encJFromBS . runIdentity . Q.getRow <$> queryTx
 
 mutateAndFetchCols ::
   forall pgKind.

@@ -30,7 +30,7 @@ const TableHeader = ({
   source,
   dispatch,
 }) => {
-  const styles = require('../../../Common/TableCommon/Table.scss');
+  const styles = require('../../../Common/TableCommon/Table.module.scss');
 
   const tableName = table.table_name;
   const tableSchema = table.table_schema;
@@ -88,9 +88,11 @@ const TableHeader = ({
 
   return (
     <div>
-      <Helmet
-        title={capitalize(tabName) + ' - ' + tableName + ' - Data | Hasura'}
-      />
+      <Helmet>
+        <title data-heap-redact-text="true">
+          {capitalize(tabName) + ' - ' + tableName + ' - Data | Hasura'}
+        </title>
+      </Helmet>
       <div className={styles.subHeader}>
         <BreadCrumb breadCrumbs={getBreadCrumbs()} />
         <EditableHeading

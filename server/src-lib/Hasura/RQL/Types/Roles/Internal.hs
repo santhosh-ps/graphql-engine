@@ -49,10 +49,10 @@ instance (OnlyRelevantEq permissionType) => Monoid (CheckPermission permissionTy
 --   instance. Multiple role permissions are combined for inherited
 --   role permissions where this is used.
 data CombineRolePermInfo (b :: BackendType) = CombineRolePermInfo
-  { crpiInsPerm :: !(CheckPermission (InsPermInfo b)),
-    crpiSelPerm :: !(Maybe (CombinedSelPermInfo b)),
-    crpiUpdPerm :: !(CheckPermission (UpdPermInfo b)),
-    crpiDelPerm :: !(CheckPermission (DelPermInfo b))
+  { crpiInsPerm :: CheckPermission (InsPermInfo b),
+    crpiSelPerm :: Maybe (CombinedSelPermInfo b),
+    crpiUpdPerm :: CheckPermission (UpdPermInfo b),
+    crpiDelPerm :: CheckPermission (DelPermInfo b)
   }
 
 instance
@@ -135,10 +135,27 @@ instance (Backend b, Eq a, Hashable a) => OnlyRelevantEq (GBoolExp b a) where
   BoolField boolExpL `relevantEq` BoolField boolExpR = boolExpL == boolExpR
   _ `relevantEq` _ = False
 
-instance (Backend b, Eq a, Eq (BooleanOperators b a), Eq (FunctionArgumentExp b a)) => OnlyRelevantEq (AnnComputedFieldBoolExp b a) where
+instance
+  ( Backend b,
+    Eq a,
+    Eq (BooleanOperators b a),
+    Eq (FunctionArgumentExp b a)
+  ) =>
+  OnlyRelevantEq (AnnComputedFieldBoolExp b a)
+  where
   relevantEq = (==)
 
-instance (Backend b, Hashable a, Eq a, Hashable (BooleanOperators b a), Eq (BooleanOperators b a), Eq (FunctionArgumentExp b a), Hashable (FunctionArgumentExp b a)) => OnlyRelevantEq (AnnBoolExpFld b a) where
+instance
+  ( Backend b,
+    Hashable a,
+    Eq a,
+    Hashable (BooleanOperators b a),
+    Eq (BooleanOperators b a),
+    Eq (FunctionArgumentExp b a),
+    Hashable (FunctionArgumentExp b a)
+  ) =>
+  OnlyRelevantEq (AnnBoolExpFld b a)
+  where
   annBoolExpFldL `relevantEq` annBoolExpFldR =
     case (annBoolExpFldL, annBoolExpFldR) of
       (AVColumn colInfoL opExpsL, AVColumn colInfoR opExpsR) ->

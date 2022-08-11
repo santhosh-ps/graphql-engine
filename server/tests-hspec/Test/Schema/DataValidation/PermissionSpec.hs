@@ -4,16 +4,16 @@
 module Test.Schema.DataValidation.PermissionSpec (spec) where
 
 import Harness.Backend.BigQuery qualified as BigQuery
-import Harness.Exceptions
 import Harness.GraphqlEngine qualified as GraphqlEngine
 import Harness.Quoter.Graphql (graphql)
-import Harness.Quoter.Yaml (shouldReturnYaml, yaml)
-import Harness.Test.Context qualified as Context
+import Harness.Quoter.Yaml (interpolateYaml, yaml)
+import Harness.Test.Fixture qualified as Fixture
 import Harness.Test.Schema (Table (..), table)
 import Harness.Test.Schema qualified as Schema
 import Harness.TestEnvironment (TestEnvironment)
+import Harness.Yaml (shouldReturnYaml)
+import Hasura.Prelude
 import Test.Hspec (SpecWith, it)
-import Prelude
 
 --------------------------------------------------------------------------------
 
@@ -21,13 +21,12 @@ import Prelude
 
 spec :: SpecWith TestEnvironment
 spec =
-  Context.run
-    [ Context.Context
-        { name = Context.Backend Context.BigQuery,
-          mkLocalTestEnvironment = Context.noLocalTestEnvironment,
-          setup = bigquerySetup,
-          teardown = bigqueryTeardown,
-          customOptions = Nothing
+  Fixture.run
+    [ (Fixture.fixture $ Fixture.Backend Fixture.BigQuery)
+        { Fixture.setupTeardown = \(testEnv, _) ->
+            [ BigQuery.setupTablesAction schema testEnv
+            ]
+              <> bigqueryPermissionsSetup testEnv
         }
     ]
     tests
@@ -85,69 +84,83 @@ article =
 
 -- ** Setup and teardown
 
-bigquerySetup :: (TestEnvironment, ()) -> IO ()
-bigquerySetup (testEnvironment, ()) = do
-  BigQuery.setup schema (testEnvironment, ())
-
-  -- also setup permissions
-  GraphqlEngine.postMetadata_ testEnvironment $
-    [yaml|
-      type: bulk
-      args:
-      - type: bigquery_create_select_permission
-        args:
-          source: bigquery
-          table:
-            dataset: hasura
-            name: article
-          role: author
-          permission:
-            filter:
-              author_id:
-                _eq: X-Hasura-User-Id
-            columns: '*'
-      - type: bigquery_create_select_permission
-        args:
-          source: bigquery
-          table:
-            dataset: hasura
-            name: article
-          role: user
-          permission:
-            filter:
-              is_published:
-                _eq: true
-            columns: '*'
-    |]
-
-bigqueryTeardown :: (TestEnvironment, ()) -> IO ()
-bigqueryTeardown (testEnvironment, ()) = do
-  -- teardown permissions
-  let teardownPermissions =
-        GraphqlEngine.postMetadata_ testEnvironment $
-          [yaml|
+bigqueryPermissionsSetup :: TestEnvironment -> [Fixture.SetupAction]
+bigqueryPermissionsSetup testEnvironment =
+  let schemaName = Schema.getSchemaName testEnvironment
+   in [ Fixture.SetupAction
+          { setupAction =
+              GraphqlEngine.postMetadata_
+                testEnvironment
+                [yaml|
+            type: bigquery_create_select_permission
+            args:
+              source: bigquery
+              table:
+                dataset: *schemaName
+                name: article
+              role: author
+              permission:
+                filter:
+                  author_id:
+                    _eq: X-Hasura-User-Id
+                columns: '*'
+          |],
+            teardownAction = \_ ->
+              GraphqlEngine.postMetadata_
+                testEnvironment
+                [yaml|
             type: bigquery_drop_select_permission
             args:
               table:
                 name: article
-                dataset: hasura
-              role: user
+                dataset: *schemaName
+              role: author
               source: bigquery
           |]
-
-  finally
-    teardownPermissions
-    -- and then rest of the teardown
-    (BigQuery.teardown schema (testEnvironment, ()))
+          },
+        Fixture.SetupAction
+          { setupAction =
+              GraphqlEngine.postMetadata_
+                testEnvironment
+                [yaml|
+            type: bigquery_create_select_permission
+            args:
+              source: bigquery
+              table:
+                dataset: *schemaName
+                name: article
+              role: user
+              permission:
+                filter:
+                  is_published:
+                    _eq: true
+                columns: '*'
+            |],
+            teardownAction = \_ ->
+              GraphqlEngine.postMetadata_
+                testEnvironment
+                [yaml|
+            type: bigquery_drop_select_permission
+            args:
+              table:
+                name: article
+                dataset: *schemaName
+              role: user
+              source: bigquery
+            |]
+          }
+      ]
 
 --------------------------------------------------------------------------------
 
 -- * Tests
 
-tests :: Context.Options -> SpecWith TestEnvironment
+tests :: Fixture.Options -> SpecWith TestEnvironment
 tests opts = do
   it "Author role cannot select articles with mismatching author_id and X-Hasura-User-Id" $ \testEnvironment -> do
     let userHeaders = [("X-Hasura-Role", "author"), ("X-Hasura-User-Id", "0")]
+        schemaName = Schema.getSchemaName testEnvironment
+
     shouldReturnYaml
       opts
       ( GraphqlEngine.postGraphqlWithHeaders
@@ -155,20 +168,22 @@ tests opts = do
           userHeaders
           [graphql|
             query {
-              hasura_article {
+              #{schemaName}_article {
                 id
                 author_id
               }
             }
           |]
       )
-      [yaml|
+      [interpolateYaml|
         data:
-          hasura_article: []
+          #{schemaName}_article: []
       |]
 
   it "Author role can select articles with matching author_id and X-Hasura-User-Id" $ \testEnvironment -> do
     let userHeaders = [("X-Hasura-Role", "author"), ("X-Hasura-User-Id", "1")]
+        schemaName = Schema.getSchemaName testEnvironment
+
     shouldReturnYaml
       opts
       ( GraphqlEngine.postGraphqlWithHeaders
@@ -176,22 +191,24 @@ tests opts = do
           userHeaders
           [graphql|
             query {
-              hasura_article {
+              #{schemaName}_article {
                 id
                 author_id
               }
             }
           |]
       )
-      [yaml|
+      [interpolateYaml|
         data:
-          hasura_article:
+          #{schemaName}_article:
           - id: '1'
             author_id: '1'
       |]
 
   it "User role can select published articles only" $ \testEnvironment -> do
     let userHeaders = [("X-Hasura-Role", "user"), ("X-Hasura-User-Id", "2")]
+        schemaName = Schema.getSchemaName testEnvironment
+
     shouldReturnYaml
       opts
       ( GraphqlEngine.postGraphqlWithHeaders
@@ -199,7 +216,7 @@ tests opts = do
           userHeaders
           [graphql|
               query {
-                hasura_article {
+                #{schemaName}_article {
                   title
                   content
                   author_id
@@ -207,9 +224,9 @@ tests opts = do
               }
             |]
       )
-      [yaml|
+      [interpolateYaml|
         data:
-          hasura_article:
+          #{schemaName}_article:
           - author_id: '2'
             content: Sample article content 2
             title: Article 2

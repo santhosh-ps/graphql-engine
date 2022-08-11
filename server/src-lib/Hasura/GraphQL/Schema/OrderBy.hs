@@ -65,7 +65,7 @@ orderByExp ::
   SourceInfo b ->
   TableInfo b ->
   m (Parser 'Input n [IR.AnnotatedOrderByItemG b (IR.UnpreparedValue b)])
-orderByExp sourceInfo tableInfo = memoizeOn 'orderByExp (_siName sourceInfo, tableInfoName tableInfo) $ do
+orderByExp sourceInfo tableInfo = P.memoizeOn 'orderByExp (_siName sourceInfo, tableInfoName tableInfo) $ do
   tableGQLName <- getTableGQLName tableInfo
   tCase <- asks getter
   name <- mkTypename $ tableGQLName <> Name.__order_by
@@ -80,7 +80,8 @@ orderByExp sourceInfo tableInfo = memoizeOn 'orderByExp (_siName sourceInfo, tab
       NamingCase ->
       FieldInfo b ->
       m (Maybe (InputFieldsParser n (Maybe [IR.AnnotatedOrderByItemG b (IR.UnpreparedValue b)])))
-    mkField tCase fieldInfo = runMaybeT $
+    mkField tCase fieldInfo = runMaybeT $ do
+      roleName <- retrieve scRole
       case fieldInfo of
         FIColumn columnInfo -> do
           let fieldName = ciName columnInfo
@@ -92,8 +93,8 @@ orderByExp sourceInfo tableInfo = memoizeOn 'orderByExp (_siName sourceInfo, tab
               <&> fmap (pure . mkOrderByItemG @b (IR.AOCColumn columnInfo)) . join
         FIRelationship relationshipInfo -> do
           remoteTableInfo <- askTableInfo sourceInfo $ riRTable relationshipInfo
+          perms <- hoistMaybe $ tableSelectPermissions roleName remoteTableInfo
           fieldName <- hoistMaybe $ G.mkName $ relNameToTxt $ riName relationshipInfo
-          perms <- MaybeT $ tableSelectPermissions remoteTableInfo
           let newPerms = fmap partialSQLExpToUnpreparedValue <$> spiFilter perms
           case riType relationshipInfo of
             ObjRel -> do
@@ -128,7 +129,7 @@ orderByExp sourceInfo tableInfo = memoizeOn 'orderByExp (_siName sourceInfo, tab
             ReturnsTable table -> do
               let aggregateFieldName = applyFieldNameCaseIdentifier tCase $ C.fromTuple (fieldName, [G.convertNameToSuffix Name._aggregate])
               tableInfo' <- askTableInfo sourceInfo table
-              perms <- MaybeT $ tableSelectPermissions tableInfo'
+              perms <- hoistMaybe $ tableSelectPermissions roleName tableInfo'
               let newPerms = fmap partialSQLExpToUnpreparedValue <$> spiFilter perms
               aggregationParser <- lift $ orderByAggregation sourceInfo tableInfo'
               pure $ do
@@ -155,7 +156,7 @@ orderByAggregation ::
   SourceInfo b ->
   TableInfo b ->
   m (Parser 'Input n [IR.OrderByItemG b (IR.AnnotatedAggregateOrderBy b)])
-orderByAggregation sourceInfo tableInfo = memoizeOn 'orderByAggregation (_siName sourceInfo, tableName) do
+orderByAggregation sourceInfo tableInfo = P.memoizeOn 'orderByAggregation (_siName sourceInfo, tableName) do
   -- WIP NOTE
   -- there is heavy duplication between this and Select.tableAggregationFields
   -- it might be worth putting some of it in common, just to avoid issues when

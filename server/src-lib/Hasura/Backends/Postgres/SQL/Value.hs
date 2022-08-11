@@ -77,32 +77,32 @@ instance FromJSON Ltree where
 
 -- @PGScalarValue@ represents any value that can be a column in a Postgres table
 data PGScalarValue
-  = PGValInteger !Int32
-  | PGValSmallInt !Int16
-  | PGValBigInt !Int64
-  | PGValFloat !Float
-  | PGValDouble !Double
-  | PGValNumeric !Scientific
-  | PGValMoney !Scientific
-  | PGValBoolean !Bool
-  | PGValChar !Char
-  | PGValVarchar !Text
-  | PGValText !Text
-  | PGValCitext !Text
-  | PGValDate !Day
-  | PGValTimeStamp !LocalTime
-  | PGValTimeStampTZ !UTCTime
-  | PGValTimeTZ !ZonedTimeOfDay
-  | PGNull !PGScalarType
-  | PGValJSON !Q.JSON
-  | PGValJSONB !Q.JSONB
-  | PGValGeo !GeometryWithCRS
-  | PGValRaster !RasterWKB
-  | PGValUUID !UUID.UUID
-  | PGValLtree !Ltree
-  | PGValLquery !Text
-  | PGValLtxtquery !Text
-  | PGValUnknown !Text
+  = PGValInteger Int32
+  | PGValSmallInt Int16
+  | PGValBigInt Int64
+  | PGValFloat Float
+  | PGValDouble Double
+  | PGValNumeric Scientific
+  | PGValMoney Scientific
+  | PGValBoolean Bool
+  | PGValChar Char
+  | PGValVarchar Text
+  | PGValText Text
+  | PGValCitext Text
+  | PGValDate Day
+  | PGValTimeStamp LocalTime
+  | PGValTimeStampTZ UTCTime
+  | PGValTimeTZ ZonedTimeOfDay
+  | PGNull PGScalarType
+  | PGValJSON Q.JSON
+  | PGValJSONB Q.JSONB
+  | PGValGeo GeometryWithCRS
+  | PGValRaster RasterWKB
+  | PGValUUID UUID.UUID
+  | PGValLtree Ltree
+  | PGValLquery Text
+  | PGValLtxtquery Text
+  | PGValUnknown Text
   | PGValArray [PGScalarValue]
   deriving (Show, Eq)
 
@@ -163,7 +163,7 @@ scientificToInteger num =
   toBoundedInteger num
     `onNothing` fail
       ( "The value " ++ show num ++ " lies outside the "
-          ++ "bounds or is not an integer.  Maybe it is a "
+          ++ "bounds or is not an integer. Maybe it is a "
           ++ "float, or is there integer overflow?"
       )
 
@@ -173,7 +173,7 @@ scientificToFloat num =
     `onLeft` \_ ->
       fail
         ( "The value " ++ show num ++ " lies outside the "
-            ++ "bounds.  Is it overflowing the float bounds?"
+            ++ "bounds. Is it overflowing the float bounds?"
         )
 
 parsePGValue :: PGScalarType -> Value -> AT.Parser PGScalarValue

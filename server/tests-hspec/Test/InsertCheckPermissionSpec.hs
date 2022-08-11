@@ -7,13 +7,14 @@ import Harness.Backend.Sqlserver qualified as Sqlserver
 import Harness.Exceptions
 import Harness.GraphqlEngine qualified as GraphqlEngine
 import Harness.Quoter.Graphql (graphql)
-import Harness.Quoter.Yaml (shouldReturnYaml, yaml)
-import Harness.Test.Context qualified as Context
+import Harness.Quoter.Yaml (yaml)
+import Harness.Test.Fixture qualified as Fixture
 import Harness.Test.Schema (Table (..), table)
 import Harness.Test.Schema qualified as Schema
 import Harness.TestEnvironment (TestEnvironment)
+import Harness.Yaml (shouldReturnYaml)
+import Hasura.Prelude
 import Test.Hspec (SpecWith, it)
-import Prelude
 
 --------------------------------------------------------------------------------
 
@@ -21,13 +22,10 @@ import Prelude
 
 spec :: SpecWith TestEnvironment
 spec =
-  Context.run
-    [ Context.Context
-        { name = Context.Backend Context.SQLServer,
-          mkLocalTestEnvironment = Context.noLocalTestEnvironment,
-          setup = mssqlSetup,
-          teardown = mssqlTeardown,
-          customOptions = Nothing
+  Fixture.run
+    [ (Fixture.fixture $ Fixture.Backend Fixture.SQLServer)
+        { Fixture.setupTeardown = \(testEnv, _) ->
+            [mssqlSetupTeardown testEnv]
         }
     ]
     tests
@@ -69,6 +67,12 @@ article =
 --------------------------------------------------------------------------------
 
 -- ** Setup and teardown
+
+mssqlSetupTeardown :: TestEnvironment -> Fixture.SetupAction
+mssqlSetupTeardown testEnv =
+  Fixture.SetupAction
+    (mssqlSetup (testEnv, ()))
+    (const $ mssqlTeardown (testEnv, ()))
 
 mssqlSetup :: (TestEnvironment, ()) -> IO ()
 mssqlSetup (testEnvironment, ()) = do
@@ -166,7 +170,7 @@ args:
 
 -- * Tests
 
-tests :: Context.Options -> SpecWith TestEnvironment
+tests :: Fixture.Options -> SpecWith TestEnvironment
 tests opts = do
   let userHeaders = [("X-Hasura-Role", "user"), ("X-Hasura-User-Id", "2")]
   it "Insert article with mismatching author_id and X-Hasura-User-Id" $ \testEnvironment ->

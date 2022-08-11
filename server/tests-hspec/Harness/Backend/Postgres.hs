@@ -26,11 +26,8 @@ where
 import Control.Concurrent.Extended (sleep)
 import Control.Monad.Reader
 import Data.Aeson (Value)
-import Data.Bool (bool)
 import Data.ByteString.Char8 qualified as S8
-import Data.Foldable (for_)
-import Data.String
-import Data.Text (Text, pack, replace)
+import Data.String (fromString)
 import Data.Text qualified as T
 import Data.Text.Extended (commaSeparated)
 import Data.Time (defaultTimeLocale, formatTime)
@@ -39,15 +36,14 @@ import Harness.Constants as Constants
 import Harness.Exceptions
 import Harness.GraphqlEngine qualified as GraphqlEngine
 import Harness.Quoter.Yaml (yaml)
-import Harness.Test.Context (BackendType (Postgres), defaultBackendTypeString, defaultSchema, defaultSource)
+import Harness.Test.BackendType (BackendType (Postgres), defaultBackendTypeString, defaultSource)
 import Harness.Test.Fixture (SetupAction (..))
 import Harness.Test.Permissions qualified as Permissions
-import Harness.Test.Schema (BackendScalarType (..), BackendScalarValue (..), ScalarValue (..))
+import Harness.Test.Schema (BackendScalarType (..), BackendScalarValue (..), ScalarValue (..), SchemaName (..))
 import Harness.Test.Schema qualified as Schema
 import Harness.TestEnvironment (TestEnvironment)
-import Hasura.Prelude (tshow)
+import Hasura.Prelude
 import System.Process.Typed
-import Prelude
 
 -- | Check the postgres server is live and ready to accept connections.
 livenessCheck :: HasCallStack => IO ()
@@ -112,8 +108,9 @@ connection_info:
 |]
 
 -- | Serialize Table into a PL-SQL statement, as needed, and execute it on the Postgres backend
-createTable :: Schema.Table -> IO ()
-createTable Schema.Table {tableName, tableColumns, tablePrimaryKey = pk, tableReferences, tableUniqueConstraints} = do
+createTable :: TestEnvironment -> Schema.Table -> IO ()
+createTable testEnv Schema.Table {tableName, tableColumns, tablePrimaryKey = pk, tableReferences, tableUniqueConstraints} = do
+  let schemaName = Schema.getSchemaName testEnv
   run_ $
     T.unpack $
       T.unwords
@@ -123,7 +120,7 @@ createTable Schema.Table {tableName, tableColumns, tablePrimaryKey = pk, tableRe
           commaSeparated $
             (mkColumn <$> tableColumns)
               <> (bool [mkPrimaryKey pk] [] (null pk))
-              <> (mkReference <$> tableReferences),
+              <> (mkReference schemaName <$> tableReferences),
           ");"
         ]
 
@@ -161,15 +158,15 @@ mkPrimaryKey key =
       ")"
     ]
 
-mkReference :: Schema.Reference -> Text
-mkReference Schema.Reference {referenceLocalColumn, referenceTargetTable, referenceTargetColumn} =
+mkReference :: SchemaName -> Schema.Reference -> Text
+mkReference schemaName Schema.Reference {referenceLocalColumn, referenceTargetTable, referenceTargetColumn} =
   T.unwords
     [ "FOREIGN KEY",
       "(",
       wrapIdentifier referenceLocalColumn,
       ")",
       "REFERENCES",
-      T.pack (defaultSchema Postgres) <> "." <> wrapIdentifier referenceTargetTable,
+      unSchemaName schemaName <> "." <> wrapIdentifier referenceTargetTable,
       "(",
       wrapIdentifier referenceTargetColumn,
       ")",
@@ -206,9 +203,9 @@ wrapIdentifier identifier = "\"" <> identifier <> "\""
 serialize :: ScalarValue -> Text
 serialize = \case
   VInt i -> tshow i
-  VStr s -> "'" <> replace "'" "\'" s <> "'"
-  VUTCTime t -> pack $ formatTime defaultTimeLocale "'%F %T'" t
-  VBool b -> tshow @Int $ if b then 1 else 0
+  VStr s -> "'" <> T.replace "'" "\'" s <> "'"
+  VUTCTime t -> T.pack $ formatTime defaultTimeLocale "'%F %T'" t
+  VBool b -> if b then "TRUE" else "FALSE"
   VNull -> "NULL"
   VCustomValue bsv -> Schema.formatBackendScalarValueType $ Schema.backendScalarValue bsv bsvPostgres
 
@@ -249,7 +246,7 @@ setup tables (testEnvironment, _) = do
   GraphqlEngine.setSource testEnvironment defaultSourceMetadata Nothing
   -- Setup and track tables
   for_ tables $ \table -> do
-    createTable table
+    createTable testEnvironment table
     insertTable table
     trackTable testEnvironment table
   -- Setup relationships

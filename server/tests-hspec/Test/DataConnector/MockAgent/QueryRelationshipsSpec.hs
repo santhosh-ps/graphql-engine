@@ -13,23 +13,22 @@ import Harness.Backend.DataConnector qualified as DataConnector
 import Harness.Quoter.Graphql (graphql)
 import Harness.Quoter.Yaml (yaml)
 import Harness.Test.BackendType (BackendType (..), defaultBackendTypeString, defaultSource)
-import Harness.Test.Context qualified as Context
+import Harness.Test.Fixture qualified as Fixture
 import Harness.TestEnvironment (TestEnvironment)
 import Hasura.Backends.DataConnector.API qualified as API
+import Hasura.Prelude
 import Test.Hspec (SpecWith, describe, it)
-import Prelude
 
 spec :: SpecWith TestEnvironment
 spec =
-  Context.runWithLocalTestEnvironment
-    [ Context.Context
-        { name = Context.Backend Context.DataConnector,
-          mkLocalTestEnvironment = DataConnector.mkLocalTestEnvironmentMock,
-          setup = DataConnector.setupMock sourceMetadata DataConnector.mockBackendConfig,
-          teardown = DataConnector.teardownMock,
-          customOptions = Nothing
-        }
-    ]
+  Fixture.runWithLocalTestEnvironment
+    ( [ (Fixture.fixture $ Fixture.Backend Fixture.DataConnector)
+          { Fixture.mkLocalTestEnvironment = DataConnector.mkLocalTestEnvironmentMock,
+            Fixture.setupTeardown = \(testEnv, mockEnv) ->
+              [DataConnector.setupMockAction sourceMetadata DataConnector.mockBackendConfig (testEnv, mockEnv)]
+          }
+      ]
+    )
     tests
 
 sourceMetadata :: Aeson.Value
@@ -40,20 +39,20 @@ sourceMetadata =
         name : *source
         kind: *backendType
         tables:
-          - table: Genre
-          - table: MediaType
-          - table: Track
+          - table: [Genre]
+          - table: [MediaType]
+          - table: [Track]
             object_relationships:
               - name: Genre
                 using:
                   manual_configuration:
-                    remote_table: Genre
+                    remote_table: [Genre]
                     column_mapping:
                       GenreId: GenreId
               - name: MediaType
                 using:
                   manual_configuration:
-                    remote_table: MediaType
+                    remote_table: [MediaType]
                     column_mapping:
                       MediaTypeId: MediaTypeId
         configuration: {}
@@ -61,7 +60,7 @@ sourceMetadata =
 
 --------------------------------------------------------------------------------
 
-tests :: Context.Options -> SpecWith (TestEnvironment, DataConnector.MockAgentEnvironment)
+tests :: Fixture.Options -> SpecWith (TestEnvironment, DataConnector.MockAgentEnvironment)
 tests opts = do
   describe "Object Relationships Tests" $ do
     it "works with multiple object relationships" $
@@ -115,22 +114,22 @@ tests opts = do
               { _whenQuery =
                   Just
                     ( API.QueryRequest
-                        { _qrTable = API.TableName "Track",
+                        { _qrTable = API.TableName ("Track" :| []),
                           _qrTableRelationships =
                             [ API.TableRelationships
-                                { _trSourceTable = API.TableName "Track",
+                                { _trSourceTable = API.TableName ("Track" :| []),
                                   _trRelationships =
                                     HashMap.fromList
                                       [ ( API.RelationshipName "Genre",
                                           API.Relationship
-                                            { _rTargetTable = API.TableName "Genre",
+                                            { _rTargetTable = API.TableName ("Genre" :| []),
                                               _rRelationshipType = API.ObjectRelationship,
                                               _rColumnMapping = HashMap.fromList [(API.ColumnName "GenreId", API.ColumnName "GenreId")]
                                             }
                                         ),
                                         ( API.RelationshipName "MediaType",
                                           API.Relationship
-                                            { _rTargetTable = API.TableName "MediaType",
+                                            { _rTargetTable = API.TableName ("MediaType" :| []),
                                               _rRelationshipType = API.ObjectRelationship,
                                               _rColumnMapping =
                                                 HashMap.fromList

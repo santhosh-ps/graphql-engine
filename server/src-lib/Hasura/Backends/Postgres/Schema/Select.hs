@@ -21,8 +21,6 @@ import Hasura.Backends.Postgres.SQL.Types qualified as PG
 import Hasura.Backends.Postgres.Types.ComputedField qualified as PG
 import Hasura.Backends.Postgres.Types.Function qualified as PG
 import Hasura.Base.Error
-import Hasura.GraphQL.Parser qualified as P
-import Hasura.GraphQL.Parser.Class
 import Hasura.GraphQL.Schema.Backend
 import Hasura.GraphQL.Schema.Common
 import Hasura.GraphQL.Schema.Options qualified as Options
@@ -30,6 +28,7 @@ import Hasura.GraphQL.Schema.Parser
   ( FieldParser,
     InputFieldsParser,
   )
+import Hasura.GraphQL.Schema.Parser qualified as P
 import Hasura.GraphQL.Schema.Select
 import Hasura.GraphQL.Schema.Table
 import Hasura.GraphQL.Schema.Typename (mkTypename)
@@ -44,7 +43,7 @@ import Hasura.RQL.Types.ComputedField
 import Hasura.RQL.Types.Function
 import Hasura.RQL.Types.SchemaCache hiding (askTableInfo)
 import Hasura.RQL.Types.Source
-import Hasura.RQL.Types.SourceCustomization (mkRootFieldName)
+import Hasura.RQL.Types.SourceCustomization (MkRootFieldName (..))
 import Hasura.RQL.Types.Table
 import Hasura.SQL.Backend
 import Language.GraphQL.Draft.Syntax qualified as G
@@ -52,26 +51,28 @@ import Language.GraphQL.Draft.Syntax qualified as G
 -- | User-defined function (AKA custom function)
 selectFunction ::
   forall r m n pgKind.
-  MonadBuildSchema ('Postgres pgKind) r m n =>
-  BackendTableSelectSchema ('Postgres pgKind) =>
-  -- | source name
+  ( MonadBuildSchema ('Postgres pgKind) r m n,
+    BackendTableSelectSchema ('Postgres pgKind)
+  ) =>
+  MkRootFieldName ->
   SourceInfo ('Postgres pgKind) ->
   -- | SQL function info
   FunctionInfo ('Postgres pgKind) ->
   -- | field description, if any
   Maybe G.Description ->
   m (Maybe (FieldParser n (SelectExp ('Postgres pgKind))))
-selectFunction sourceInfo fi@FunctionInfo {..} description = runMaybeT do
+selectFunction mkRootFieldName sourceInfo fi@FunctionInfo {..} description = runMaybeT do
   tCase <- asks getter
+  roleName <- retrieve scRole
   tableInfo <- lift $ askTableInfo sourceInfo _fiReturnType
-  selectPermissions <- MaybeT $ tableSelectPermissions tableInfo
+  selectPermissions <- hoistMaybe $ tableSelectPermissions roleName tableInfo
   selectionSetParser <- MaybeT $ returnFunctionParser sourceInfo tableInfo
   lift do
     stringifyNumbers <- retrieve Options.soStringifyNumbers
     tableArgsParser <- tableArguments sourceInfo tableInfo
     functionArgsParser <- customSQLFunctionArgs sourceInfo fi _fiGQLName _fiGQLArgsName
     let argsParser = liftA2 (,) functionArgsParser tableArgsParser
-    functionFieldName <- mkRootFieldName _fiGQLName
+        functionFieldName = runMkRootFieldName mkRootFieldName _fiGQLName
     pure $
       P.subselection functionFieldName description argsParser selectionSetParser
         <&> \((funcArgs, tableArgs'), fields) ->
@@ -91,8 +92,10 @@ selectFunction sourceInfo fi@FunctionInfo {..} description = runMaybeT do
 
 selectFunctionAggregate ::
   forall r m n pgKind.
-  MonadBuildSchema ('Postgres pgKind) r m n =>
-  BackendTableSelectSchema ('Postgres pgKind) =>
+  ( MonadBuildSchema ('Postgres pgKind) r m n,
+    BackendTableSelectSchema ('Postgres pgKind)
+  ) =>
+  MkRootFieldName ->
   -- | source name
   SourceInfo ('Postgres pgKind) ->
   -- | SQL function info
@@ -100,10 +103,11 @@ selectFunctionAggregate ::
   -- | field description, if any
   Maybe G.Description ->
   m (Maybe (FieldParser n (AggSelectExp ('Postgres pgKind))))
-selectFunctionAggregate sourceInfo fi@FunctionInfo {..} description = runMaybeT do
+selectFunctionAggregate mkRootFieldName sourceInfo fi@FunctionInfo {..} description = runMaybeT do
   tCase <- asks getter
+  roleName <- retrieve scRole
   targetTableInfo <- askTableInfo sourceInfo _fiReturnType
-  selectPermissions <- MaybeT $ tableSelectPermissions targetTableInfo
+  selectPermissions <- hoistMaybe $ tableSelectPermissions roleName targetTableInfo
   guard $ spiAllowAgg selectPermissions
   xNodesAgg <- hoistMaybe $ nodesAggExtension @('Postgres pgKind)
   tableInfo <- askTableInfo sourceInfo _fiReturnType
@@ -115,8 +119,8 @@ selectFunctionAggregate sourceInfo fi@FunctionInfo {..} description = runMaybeT 
     functionArgsParser <- customSQLFunctionArgs sourceInfo fi _fiGQLAggregateName _fiGQLArgsName
     aggregateParser <- tableAggregationFields sourceInfo tableInfo
     selectionName <- mkTypename =<< pure (tableGQLName <> Name.__aggregate)
-    aggregateFieldName <- mkRootFieldName _fiGQLAggregateName
-    let argsParser = liftA2 (,) functionArgsParser tableArgsParser
+    let aggregateFieldName = runMkRootFieldName mkRootFieldName _fiGQLAggregateName
+        argsParser = liftA2 (,) functionArgsParser tableArgsParser
         aggregationParser =
           fmap (parsedSelectionsToFields IR.TAFExp) $
             P.nonNullableParser $
@@ -143,6 +147,7 @@ selectFunctionConnection ::
   ( MonadBuildSchema ('Postgres pgKind) r m n,
     BackendTableSelectSchema ('Postgres pgKind)
   ) =>
+  MkRootFieldName ->
   -- | source name
   SourceInfo ('Postgres pgKind) ->
   -- | SQL function info
@@ -152,15 +157,16 @@ selectFunctionConnection ::
   -- | primary key columns of the target table
   PrimaryKeyColumns ('Postgres pgKind) ->
   m (Maybe (FieldParser n (ConnectionSelectExp ('Postgres pgKind))))
-selectFunctionConnection sourceInfo fi@FunctionInfo {..} description pkeyColumns = runMaybeT do
+selectFunctionConnection mkRootFieldName sourceInfo fi@FunctionInfo {..} description pkeyColumns = runMaybeT do
   tCase <- asks getter
+  roleName <- retrieve scRole
   returnTableInfo <- lift $ askTableInfo sourceInfo _fiReturnType
-  selectPermissions <- MaybeT $ tableSelectPermissions returnTableInfo
+  selectPermissions <- hoistMaybe $ tableSelectPermissions roleName returnTableInfo
   xRelayInfo <- hoistMaybe $ relayExtension @('Postgres pgKind)
   tableInfo <- lift $ askTableInfo sourceInfo _fiReturnType
   selectionSetParser <- MaybeT $ tableConnectionSelectionSet sourceInfo tableInfo
   lift do
-    fieldName <- mkRootFieldName $ _fiGQLName <> Name.__connection
+    let fieldName = runMkRootFieldName mkRootFieldName $ _fiGQLName <> Name.__connection
     stringifyNumbers <- retrieve Options.soStringifyNumbers
     tableConnectionArgsParser <- tableConnectionArgs pkeyColumns sourceInfo tableInfo
     functionArgsParser <- customSQLFunctionArgs sourceInfo fi _fiGQLName _fiGQLArgsName
@@ -196,8 +202,9 @@ computedFieldPG ::
   m (Maybe (FieldParser n (AnnotatedField ('Postgres pgKind))))
 computedFieldPG sourceInfo ComputedFieldInfo {..} parentTable tableInfo = runMaybeT do
   tCase <- asks getter
-  selectPermissions <- MaybeT $ tableSelectPermissions tableInfo
+  roleName <- retrieve scRole
   stringifyNumbers <- retrieve Options.soStringifyNumbers
+  selectPermissions <- hoistMaybe $ tableSelectPermissions roleName tableInfo
   fieldName <- lift $ textToName $ computedFieldNameToText _cfiName
   functionArgsParser <- lift $ computedFieldFunctionArgs _cfiFunction
   case _cfiReturnType of
@@ -227,7 +234,7 @@ computedFieldPG sourceInfo ComputedFieldInfo {..} parentTable tableInfo = runMay
       pure $ P.selection fieldName fieldDescription fieldArgsParser dummyParser
     PG.CFRSetofTable tableName -> do
       otherTableInfo <- lift $ askTableInfo sourceInfo tableName
-      remotePerms <- MaybeT $ tableSelectPermissions otherTableInfo
+      remotePerms <- hoistMaybe $ tableSelectPermissions roleName otherTableInfo
       selectionSetParser <- MaybeT (fmap (P.multiple . P.nonNullableParser) <$> tableSelectionSet sourceInfo otherTableInfo)
       selectArgsParser <- lift $ tableArguments sourceInfo otherTableInfo
       let fieldArgsParser = liftA2 (,) functionArgsParser selectArgsParser
@@ -421,28 +428,30 @@ functionArgs sourceInfo functionTrackedAs (toList -> inputArgs) = do
       IAUserProvided arg -> case Map.lookup name dictionary of
         Just parsedValue -> case PG.faName arg of
           Just _ -> pure $ Just (name, parsedValue)
-          Nothing -> parseErrorWith NotSupported "Only last set of positional arguments can be omitted"
+          Nothing -> P.parseErrorWith P.NotSupported "Only last set of positional arguments can be omitted"
         Nothing ->
           whenMaybe (not $ PG.unHasDefault $ PG.faHasDefault arg) $
-            parseErrorWith NotSupported "Non default arguments cannot be omitted"
+            P.parseErrorWith P.NotSupported "Non default arguments cannot be omitted"
 
 buildFunctionQueryFieldsPG ::
   forall r m n pgKind.
-  MonadBuildSchema ('Postgres pgKind) r m n =>
-  BackendTableSelectSchema ('Postgres pgKind) =>
+  ( MonadBuildSchema ('Postgres pgKind) r m n,
+    BackendTableSelectSchema ('Postgres pgKind)
+  ) =>
+  MkRootFieldName ->
   SourceInfo ('Postgres pgKind) ->
   FunctionName ('Postgres pgKind) ->
   FunctionInfo ('Postgres pgKind) ->
   TableName ('Postgres pgKind) ->
   m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField UnpreparedValue) (UnpreparedValue ('Postgres pgKind)))]
-buildFunctionQueryFieldsPG sourceInfo functionName functionInfo tableName = do
+buildFunctionQueryFieldsPG mkRootFieldName sourceInfo functionName functionInfo tableName = do
   let -- select function
       funcDesc =
         Just . G.Description $
           flip fromMaybe (_fiComment functionInfo) $ "execute function " <> functionName <<> " which returns " <>> tableName
       -- select function agg
-
-      funcAggDesc = Just $ G.Description $ "execute function " <> functionName <<> " and query aggregates on result of table type " <>> tableName
+      funcAggDesc =
+        Just $ G.Description $ "execute function " <> functionName <<> " and query aggregates on result of table type " <>> tableName
 
       queryResultType =
         case _fiJsonAggSelect functionInfo of
@@ -451,24 +460,26 @@ buildFunctionQueryFieldsPG sourceInfo functionName functionInfo tableName = do
 
   catMaybes
     <$> sequenceA
-      [ optionalFieldParser (queryResultType) $ selectFunction sourceInfo functionInfo funcDesc,
-        optionalFieldParser (QDBAggregation) $ selectFunctionAggregate sourceInfo functionInfo funcAggDesc
+      [ optionalFieldParser (queryResultType) $ selectFunction mkRootFieldName sourceInfo functionInfo funcDesc,
+        optionalFieldParser (QDBAggregation) $ selectFunctionAggregate mkRootFieldName sourceInfo functionInfo funcAggDesc
       ]
 
 buildFunctionMutationFieldsPG ::
   forall r m n pgKind.
-  MonadBuildSchema ('Postgres pgKind) r m n =>
-  BackendTableSelectSchema ('Postgres pgKind) =>
+  ( MonadBuildSchema ('Postgres pgKind) r m n,
+    BackendTableSelectSchema ('Postgres pgKind)
+  ) =>
+  MkRootFieldName ->
   SourceInfo ('Postgres pgKind) ->
   FunctionName ('Postgres pgKind) ->
   FunctionInfo ('Postgres pgKind) ->
   TableName ('Postgres pgKind) ->
   m [FieldParser n (MutationDB ('Postgres pgKind) (RemoteRelationshipField UnpreparedValue) (UnpreparedValue ('Postgres pgKind)))]
-buildFunctionMutationFieldsPG sourceInfo functionName functionInfo tableName = do
+buildFunctionMutationFieldsPG mkRootFieldName sourceInfo functionName functionInfo tableName = do
   let funcDesc = Just $ G.Description $ "execute VOLATILE function " <> functionName <<> " which returns " <>> tableName
       jsonAggSelect = _fiJsonAggSelect functionInfo
   catMaybes
     <$> sequenceA
-      [ optionalFieldParser (MDBFunction jsonAggSelect) $ selectFunction sourceInfo functionInfo funcDesc
+      [ optionalFieldParser (MDBFunction jsonAggSelect) $ selectFunction mkRootFieldName sourceInfo functionInfo funcDesc
       -- TODO: do we want aggregate mutation functions?
       ]

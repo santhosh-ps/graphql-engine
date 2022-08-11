@@ -7,6 +7,10 @@ module Hasura.GraphQL.Schema.Common
     NodeInterfaceParserBuilder (..),
     MonadBuildSchemaBase,
     retrieve,
+    MonadBuildSourceSchema,
+    MonadBuildRemoteSchema,
+    runSourceSchema,
+    runRemoteSchema,
     ignoreRemoteRelationship,
     isHasuraSchema,
     AggSelectExp,
@@ -82,7 +86,9 @@ data SchemaContext = SchemaContext
   { -- | the kind of schema being built
     scSchemaKind :: SchemaKind,
     -- | how to process remote relationships
-    scRemoteRelationshipParserBuilder :: RemoteRelationshipParserBuilder
+    scRemoteRelationshipParserBuilder :: RemoteRelationshipParserBuilder,
+    -- | the role for which the schema is being built
+    scRole :: RoleName
   }
 
 -- | The kind of schema we're building, and its associated options.
@@ -99,13 +105,12 @@ isHasuraSchema = \case
 type MonadBuildSchemaBase r m n =
   ( MonadError QErr m,
     MonadReader r m,
-    P.MonadSchema n m,
+    P.MonadMemoize m,
+    P.MonadParse n,
     Has SchemaOptions r,
     Has SchemaContext r,
     -- TODO: make all `Has x r` explicit fields of 'SchemaContext'
-    Has RoleName r,
     Has MkTypename r,
-    Has MkRootFieldName r,
     Has CustomizeRemoteFieldName r,
     Has NamingCase r
   )
@@ -151,6 +156,42 @@ retrieve ::
   (a -> b) ->
   m b
 retrieve f = asks $ f . getter
+
+-------------------------------------------------------------------------------
+
+type MonadBuildSourceSchema r m n = MonadBuildSchemaBase r m n
+
+runSourceSchema ::
+  SchemaContext ->
+  SchemaOptions ->
+  ReaderT
+    ( SchemaContext,
+      SchemaOptions,
+      MkTypename,
+      CustomizeRemoteFieldName,
+      NamingCase
+    )
+    m
+    a ->
+  m a
+runSourceSchema context options = flip runReaderT (context, options, mempty, mempty, HasuraCase)
+
+type MonadBuildRemoteSchema r m n = MonadBuildSchemaBase r m n
+
+runRemoteSchema ::
+  SchemaContext ->
+  SchemaOptions ->
+  ReaderT
+    ( SchemaContext,
+      SchemaOptions,
+      MkTypename,
+      CustomizeRemoteFieldName,
+      NamingCase
+    )
+    m
+    a ->
+  m a
+runRemoteSchema context options = flip runReaderT (context, options, mempty, mempty, HasuraCase)
 
 -------------------------------------------------------------------------------
 

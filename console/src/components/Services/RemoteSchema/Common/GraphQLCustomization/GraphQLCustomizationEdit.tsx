@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { OverlayTrigger } from 'react-bootstrap';
-import Tooltip from 'react-bootstrap/lib/Tooltip';
 import { GraphQLSchema } from 'graphql';
-import { FaQuestionCircle } from 'react-icons/fa';
+import { IconTooltip } from '@/new-components/Tooltip';
 import { Button } from '../../../../Common';
 import { graphQLCustomization as GType } from '../../types';
 import TypeMapping from './TypeMapping';
@@ -82,9 +80,8 @@ const GraphQLCustomizationEdit = ({
   >(null);
   const [typeNames, setTypesNames] = useState<null | TypeNamesType>(null);
   const [fieldNames, setFieldNames] = useState<null | FieldNamesType[]>(null);
-  const [showFieldCustomizationBtn, updateShowFieldCustomizationBtn] = useState(
-    true
-  );
+  const [showFieldCustomizationBtn, updateShowFieldCustomizationBtn] =
+    useState(true);
   const [tempFieldName, setTempFieldName] = useState<
     FieldNamesType | undefined
   >(undefined);
@@ -156,16 +153,7 @@ const GraphQLCustomizationEdit = ({
           <div className="flex items-center mt-md">
             <label className="w-1/3">
               Root Field Namespace{' '}
-              <OverlayTrigger
-                placement="right"
-                overlay={
-                  <Tooltip id="tooltip-cascade">
-                    Root field type names will be prefixed by this name.
-                  </Tooltip>
-                }
-              >
-                <FaQuestionCircle aria-hidden="true" />
-              </OverlayTrigger>
+              <IconTooltip message="Root field type names will be prefixed by this name." />
             </label>
             <div className="w-2/3">
               <input
@@ -232,16 +220,10 @@ const GraphQLCustomizationEdit = ({
 
           <div className="text-lg font-bold mt-md">
             Rename Type Names{' '}
-            <OverlayTrigger
-              placement="right"
-              overlay={
-                <Tooltip id="tooltip-cascade">
-                  Type remapping takes precedence to prefixes and suffixes.
-                </Tooltip>
-              }
-            >
-              <FaQuestionCircle aria-hidden="true" />
-            </OverlayTrigger>
+            <IconTooltip
+              message="Type remapping takes precedence to prefixes and suffixes."
+              side="right"
+            />
           </div>
 
           <TypeMapping

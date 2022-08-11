@@ -24,10 +24,6 @@ export type SelectProps = FieldWrapperPassThroughProps & {
    */
   placeholder?: string;
   /**
-   * The select field size
-   */
-  size?: 'full' | 'medium';
-  /**
    * Flag to indicate if the field is disabled
    */
   disabled?: boolean;
@@ -39,7 +35,6 @@ export type SelectProps = FieldWrapperPassThroughProps & {
 
 export const Select: React.VFC<SelectProps> = ({
   name,
-  size = 'full',
   options,
   placeholder,
   dataTest,
@@ -57,16 +52,11 @@ export const Select: React.VFC<SelectProps> = ({
   const watchValue = watch(name);
 
   return (
-    <FieldWrapper
-      id={name}
-      {...wrapperProps}
-      className={size === 'medium' ? 'w-1/2 max-w-lg' : 'w-full max-w-xl'}
-      error={maybeError}
-    >
+    <FieldWrapper id={name} {...wrapperProps} error={maybeError}>
       <select
         id={name}
         className={clsx(
-          'block w-full max-w-xl h-input shadow-sm rounded border border-gray-300 hover:border-gray-400 focus:outline-0 focus:ring-2 focus:ring-yellow-200 focus:border-yellow-400',
+          'block w-full max-w-xl h-input shadow-sm rounded border border-gray-300 hover:border-gray-400 focus-visible:outline-0 focus-visible:ring-2 focus-visible:ring-yellow-200 focus-visible:border-yellow-400',
           watchValue && watchValue !== '' ? 'text-black' : 'text-gray-500',
           disabled
             ? 'cursor-not-allowed bg-gray-100 border-gray-100'

@@ -77,21 +77,22 @@ resolveSourceConfig ::
   BackendSourceKind ('Postgres pgKind) ->
   BackendConfig ('Postgres pgKind) ->
   Env.Environment ->
+  manager ->
   m (Either QErr (SourceConfig ('Postgres pgKind)))
-resolveSourceConfig _logger name config _backendKind _backendConfig _env = runExceptT do
+resolveSourceConfig _logger name config _backendKind _backendConfig _env _manager = runExceptT do
   sourceResolver <- getPGSourceResolver
   liftEitherM $ liftIO $ sourceResolver name config
 
 -- | 'PGSourceLockQuery' is a data type which represents the contents of a single object of the
 --   locked queries which are queried from the `pg_stat_activity`. See `logPGSourceCatalogMigrationLockedQueries`.
 data PGSourceLockQuery = PGSourceLockQuery
-  { _psqaQuery :: !Text,
-    _psqaLockGranted :: !(Maybe Bool),
-    _psqaLockMode :: !Text,
-    _psqaTransactionStartTime :: !UTCTime,
-    _psqaQueryStartTime :: !UTCTime,
-    _psqaWaitEventType :: !Text,
-    _psqaBlockingQuery :: !Text
+  { _psqaQuery :: Text,
+    _psqaLockGranted :: Maybe Bool,
+    _psqaLockMode :: Text,
+    _psqaTransactionStartTime :: UTCTime,
+    _psqaQueryStartTime :: UTCTime,
+    _psqaWaitEventType :: Text,
+    _psqaBlockingQuery :: Text
   }
 
 $(deriveJSON hasuraJSON ''PGSourceLockQuery)
@@ -183,7 +184,7 @@ prepareCatalog sourceConfig = runTx (_pscExecCtx sourceConfig) Q.ReadWrite do
       -- Fresh database
       | not hdbCatalogExist -> liftTx do
         Q.unitQE defaultTxErrorHandler "CREATE SCHEMA hdb_catalog" () False
-        enablePgcryptoExtension
+        enablePgcryptoExtension $ _pscExtensionsSchema sourceConfig
         initPgSourceCatalog
         return RETDoNothing
       -- Only 'hdb_catalog' schema defined

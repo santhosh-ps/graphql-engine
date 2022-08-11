@@ -405,12 +405,12 @@ type SelectFrom b = SelectFromG b (SQLExpression b)
 
 data SelectStreamArgsG (b :: BackendType) v = SelectStreamArgsG
   { -- | optional filter to filter the stream results
-    _ssaWhere :: !(Maybe (AnnBoolExp b v)),
+    _ssaWhere :: Maybe (AnnBoolExp b v),
     -- | maximum number of rows to be returned in a single fetch
-    _ssaBatchSize :: !Int,
+    _ssaBatchSize :: Int,
     -- | info related to the cursor column, a single item data type
     --   currently because only single column cursors are supported
-    _ssaCursorArg :: !(StreamCursorItem b)
+    _ssaCursorArg :: StreamCursorItem b
   }
   deriving (Generic, Functor, Foldable, Traversable)
 
@@ -484,11 +484,29 @@ data ComputedFieldOrderByElement (b :: BackendType) v
       -- ^ Sort by aggregation fields of table rows returned by computed field
   deriving stock (Generic, Functor, Foldable, Traversable)
 
-deriving stock instance (Backend b, Eq v, Eq (BooleanOperators b v), Eq (FunctionArgumentExp b v)) => Eq (ComputedFieldOrderByElement b v)
+deriving stock instance
+  ( Backend b,
+    Eq v,
+    Eq (BooleanOperators b v),
+    Eq (FunctionArgumentExp b v)
+  ) =>
+  Eq (ComputedFieldOrderByElement b v)
 
-deriving stock instance (Backend b, Show v, Show (BooleanOperators b v), Show (FunctionArgumentExp b v)) => Show (ComputedFieldOrderByElement b v)
+deriving stock instance
+  ( Backend b,
+    Show v,
+    Show (BooleanOperators b v),
+    Show (FunctionArgumentExp b v)
+  ) =>
+  Show (ComputedFieldOrderByElement b v)
 
-instance (Backend b, Hashable v, Hashable (BooleanOperators b v), Hashable (FunctionArgumentExp b v)) => Hashable (ComputedFieldOrderByElement b v)
+instance
+  ( Backend b,
+    Hashable v,
+    Hashable (BooleanOperators b v),
+    Hashable (FunctionArgumentExp b v)
+  ) =>
+  Hashable (ComputedFieldOrderByElement b v)
 
 data ComputedFieldOrderBy (b :: BackendType) v = ComputedFieldOrderBy
   { _cfobXField :: XComputedField b,
@@ -505,11 +523,29 @@ deriving stock instance (Backend b) => Foldable (ComputedFieldOrderBy b)
 
 deriving stock instance (Backend b) => Traversable (ComputedFieldOrderBy b)
 
-deriving stock instance (Backend b, Eq v, Eq (BooleanOperators b v), Eq (FunctionArgumentExp b v)) => Eq (ComputedFieldOrderBy b v)
+deriving stock instance
+  ( Backend b,
+    Eq v,
+    Eq (BooleanOperators b v),
+    Eq (FunctionArgumentExp b v)
+  ) =>
+  Eq (ComputedFieldOrderBy b v)
 
-deriving stock instance (Backend b, Show v, Show (BooleanOperators b v), Show (FunctionArgumentExp b v)) => Show (ComputedFieldOrderBy b v)
+deriving stock instance
+  ( Backend b,
+    Show v,
+    Show (BooleanOperators b v),
+    Show (FunctionArgumentExp b v)
+  ) =>
+  Show (ComputedFieldOrderBy b v)
 
-instance (Backend b, Hashable v, Hashable (BooleanOperators b v), Hashable (FunctionArgumentExp b v)) => Hashable (ComputedFieldOrderBy b v)
+instance
+  ( Backend b,
+    Hashable v,
+    Hashable (BooleanOperators b v),
+    Hashable (FunctionArgumentExp b v)
+  ) =>
+  Hashable (ComputedFieldOrderBy b v)
 
 data AnnotatedOrderByElement (b :: BackendType) v
   = AOCColumn (ColumnInfo b)
@@ -526,15 +562,33 @@ data AnnotatedOrderByElement (b :: BackendType) v
   | AOCComputedField (ComputedFieldOrderBy b v)
   deriving stock (Generic, Functor, Foldable, Traversable)
 
-deriving stock instance (Backend b, Eq v, Eq (BooleanOperators b v), Eq (FunctionArgumentExp b v)) => Eq (AnnotatedOrderByElement b v)
+deriving stock instance
+  ( Backend b,
+    Eq v,
+    Eq (BooleanOperators b v),
+    Eq (FunctionArgumentExp b v)
+  ) =>
+  Eq (AnnotatedOrderByElement b v)
 
-deriving stock instance (Backend b, Show v, Show (BooleanOperators b v), Show (FunctionArgumentExp b v)) => Show (AnnotatedOrderByElement b v)
+deriving stock instance
+  ( Backend b,
+    Show v,
+    Show (BooleanOperators b v),
+    Show (FunctionArgumentExp b v)
+  ) =>
+  Show (AnnotatedOrderByElement b v)
 
-instance (Backend b, Hashable v, Hashable (BooleanOperators b v), Hashable (FunctionArgumentExp b v)) => Hashable (AnnotatedOrderByElement b v)
+instance
+  ( Backend b,
+    Hashable v,
+    Hashable (BooleanOperators b v),
+    Hashable (FunctionArgumentExp b v)
+  ) =>
+  Hashable (AnnotatedOrderByElement b v)
 
 data AnnotatedAggregateOrderBy (b :: BackendType)
   = AAOCount
-  | AAOOp Text !(ColumnInfo b)
+  | AAOOp Text (ColumnInfo b)
   deriving stock (Generic)
 
 deriving stock instance (Backend b) => Eq (AnnotatedAggregateOrderBy b)
@@ -550,11 +604,11 @@ type AnnotatedOrderByItem b = AnnotatedOrderByItemG b (SQLExpression b)
 -- | Cursor for streaming subscription
 data StreamCursorItem (b :: BackendType) = StreamCursorItem
   { -- | Specifies how the cursor item should be ordered
-    _sciOrdering :: !CursorOrdering,
+    _sciOrdering :: CursorOrdering,
     -- | Column info of the cursor item
-    _sciColInfo :: !(ColumnInfo b),
+    _sciColInfo :: ColumnInfo b,
     -- | Initial value of the cursor item from where the streaming should start
-    _sciInitialValue :: !(ColumnValue b)
+    _sciInitialValue :: ColumnValue b
   }
   deriving (Generic)
 
@@ -696,7 +750,7 @@ data AggregateOp (b :: BackendType) = AggregateOp
   deriving stock (Eq, Show)
 
 data ColFld (b :: BackendType)
-  = CFCol (Column b) !(ColumnType b)
+  = CFCol (Column b) (ColumnType b)
   | CFExp Text
   deriving stock (Eq, Show)
 
@@ -852,7 +906,7 @@ data ComputedFieldSelect (b :: BackendType) (r :: Type) v
       -- the scalar computed value will be outputted as computed and when the
       -- value is `Just c`, the scalar computed field will be outputted when
       -- `c` evaluates to `true` and `null` when `c` evaluates to `false`
-  | CFSTable JsonAggSelect !(AnnSimpleSelectG b r v)
+  | CFSTable JsonAggSelect (AnnSimpleSelectG b r v)
   deriving stock (Functor, Foldable, Traversable)
 
 deriving stock instance

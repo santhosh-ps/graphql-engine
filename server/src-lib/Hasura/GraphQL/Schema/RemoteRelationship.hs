@@ -15,7 +15,7 @@ import Hasura.GraphQL.Schema.Common
 import Hasura.GraphQL.Schema.Instances ()
 import Hasura.GraphQL.Schema.NamingCase
 import Hasura.GraphQL.Schema.Options (RemoteSchemaPermissions)
-import Hasura.GraphQL.Schema.Parser (FieldParser, MonadSchema)
+import Hasura.GraphQL.Schema.Parser (FieldParser, MonadMemoize)
 import Hasura.GraphQL.Schema.Parser qualified as P
 import Hasura.GraphQL.Schema.Remote
 import Hasura.GraphQL.Schema.Select
@@ -71,7 +71,7 @@ remoteRelationshipToSchemaField ::
   RemoteSchemaFieldInfo ->
   m (Maybe (FieldParser n (IR.RemoteSchemaSelect (IR.RemoteRelationshipField IR.UnpreparedValue))))
 remoteRelationshipToSchemaField remoteSchemaCache remoteSchemaPermissions lhsFields RemoteSchemaFieldInfo {..} = runMaybeT do
-  roleName <- asks getter
+  roleName <- retrieve scRole
   remoteSchemaContext <-
     Map.lookup _rrfiRemoteSchemaName remoteSchemaCache
       `onNothing` throw500 ("invalid remote schema name: " <>> _rrfiRemoteSchemaName)
@@ -146,7 +146,7 @@ remoteRelationshipToSchemaField remoteSchemaCache remoteSchemaPermissions lhsFie
       foldr (modifyFieldByName . fcName) resultCustomizer $ NE.init fieldCalls
 
 lookupNestedFieldType' ::
-  (MonadSchema n m, MonadError QErr m) =>
+  (MonadMemoize m, MonadError QErr m) =>
   G.Name ->
   RemoteSchemaIntrospection ->
   FieldCall ->
@@ -160,7 +160,7 @@ lookupNestedFieldType' parentTypeName remoteSchemaIntrospection (FieldCall fcNam
         Just G.FieldDefinition {..} -> pure _fldType
 
 lookupNestedFieldType ::
-  (MonadSchema n m, MonadError QErr m) =>
+  (MonadMemoize m, MonadError QErr m) =>
   G.Name ->
   RemoteSchemaIntrospection ->
   NonEmpty FieldCall ->
@@ -188,13 +188,13 @@ remoteRelationshipToSourceField ::
 remoteRelationshipToSourceField sourceCache RemoteSourceFieldInfo {..} =
   withTypenameCustomization (mkCustomizedTypename (Just _rsfiSourceCustomization) HasuraCase) do
     tCase <- asks getter
+    roleName <- retrieve scRole
     sourceInfo <-
       onNothing (unsafeSourceInfo @tgt =<< Map.lookup _rsfiSource sourceCache) $
         throw500 $ "source not found " <> dquote _rsfiSource
     tableInfo <- askTableInfo sourceInfo _rsfiTable
     fieldName <- textToName $ relNameToTxt _rsfiName
-    maybePerms <- tableSelectPermissions @tgt tableInfo
-    case maybePerms of
+    case tableSelectPermissions @tgt roleName tableInfo of
       Nothing -> pure []
       Just tablePerms -> do
         parsers <- case _rsfiType of

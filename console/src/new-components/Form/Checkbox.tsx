@@ -21,10 +21,6 @@ export type CheckboxProps = FieldWrapperPassThroughProps & {
    */
   options: CheckboxItem[];
   /**
-   * The checkbox list size
-   */
-  size?: 'full' | 'medium';
-  /**
    * The checkbox list orientation
    */
   orientation?: 'vertical' | 'horizontal';
@@ -36,7 +32,6 @@ export type CheckboxProps = FieldWrapperPassThroughProps & {
 
 export const Checkbox: React.FC<CheckboxProps> = ({
   name,
-  size = 'full',
   options,
   orientation = 'vertical',
   disabled = false,
@@ -50,12 +45,7 @@ export const Checkbox: React.FC<CheckboxProps> = ({
 
   const maybeError = get(errors, name) as FieldError | undefined;
   return (
-    <FieldWrapper
-      id={name}
-      {...wrapperProps}
-      className={size === 'medium' ? 'w-1/2 max-w-lg' : 'w-full max-w-xl'}
-      error={maybeError}
-    >
+    <FieldWrapper id={name} {...wrapperProps} error={maybeError}>
       <div
         className={clsx(
           'flex',
@@ -79,7 +69,7 @@ export const Checkbox: React.FC<CheckboxProps> = ({
                     ? 'border-red-600 hover:border-red-700'
                     : disabled || optionDisabled
                     ? 'cursor-not-allowed bg-gray-200 border-gray-300'
-                    : ' border-gray-400 hover:border-gray-500 focus:ring-yellow-400'
+                    : ' border-gray-400 hover:border-gray-500 focus-visible:ring-yellow-400'
                 )}
                 // Force margin to mitigate bug introduced by a too much restrictive reset
                 style={{ marginTop: '0' }}

@@ -355,6 +355,7 @@ buildSchemaCacheRule logger env = proc (metadata, invalidationKeys) -> do
         ArrowWriter (Seq CollectedInfo) arr,
         MonadIO m,
         MonadResolveSource m,
+        HasHttpManagerM m,
         BackendMetadata b
       ) =>
       ( Inc.Dependency (HashMap SourceName Inc.InvalidationKey),
@@ -366,10 +367,11 @@ buildSchemaCacheRule logger env = proc (metadata, invalidationKeys) -> do
         `arr` Maybe (SourceConfig b)
     getSourceConfigIfNeeded = Inc.cache proc (invalidationKeys, sourceName, sourceConfig, backendKind, backendConfig) -> do
       let metadataObj = MetadataObject (MOSource sourceName) $ toJSON sourceName
+      httpMgr <- bindA -< askHttpManager
       Inc.dependOn -< Inc.selectKeyD sourceName invalidationKeys
       (|
         withRecordInconsistency
-          ( liftEitherA <<< bindA -< resolveSourceConfig @b logger sourceName sourceConfig backendKind backendConfig env
+          ( liftEitherA <<< bindA -< resolveSourceConfig @b logger sourceName sourceConfig backendKind backendConfig env httpMgr
           )
         |) metadataObj
 
@@ -381,6 +383,7 @@ buildSchemaCacheRule logger env = proc (metadata, invalidationKeys) -> do
         MonadIO m,
         MonadBaseControl IO m,
         MonadResolveSource m,
+        HasHttpManagerM m,
         BackendMetadata b
       ) =>
       ( Inc.Dependency (HashMap SourceName Inc.InvalidationKey),
@@ -522,8 +525,8 @@ buildSchemaCacheRule logger env = proc (metadata, invalidationKeys) -> do
             )
           |) (tableCoreInfos `alignTableMap` mapFromL _tpiTable permissions `alignTableMap` eventTriggerInfoMaps)
 
-      defaultNC <- bindA -< _sccDefaultNamingConvention <$> askServerConfigCtx
-      isNamingConventionEnabled <- bindA -< ((EFNamingConventions `elem`) . _sccExperimentalFeatures) <$> askServerConfigCtx
+      !defaultNC <- bindA -< _sccDefaultNamingConvention <$> askServerConfigCtx
+      !isNamingConventionEnabled <- bindA -< ((EFNamingConventions `elem`) . _sccExperimentalFeatures) <$> askServerConfigCtx
 
       -- sql functions
       functionCache <-
@@ -564,7 +567,7 @@ buildSchemaCacheRule logger env = proc (metadata, invalidationKeys) -> do
                         |) metadataObject
                   )
               |)
-          >-> (\infos -> M.catMaybes infos >- returnA)
+          >-> (\infos -> catMaybes infos >- returnA)
 
       returnA -< AB.mkAnyBackend $ SourceInfo sourceName tableCache functionCache sourceConfig queryTagsConfig sourceCustomization
 
@@ -639,8 +642,8 @@ buildSchemaCacheRule logger env = proc (metadata, invalidationKeys) -> do
       remoteSchemaMap <- buildRemoteSchemas -< (remoteSchemaInvalidationKeys, OMap.elems remoteSchemas)
       let remoteSchemaCtxMap = M.map (fst . fst) remoteSchemaMap
 
-      defaultNC <- bindA -< _sccDefaultNamingConvention <$> askServerConfigCtx
-      isNamingConventionEnabled <- bindA -< ((EFNamingConventions `elem`) . _sccExperimentalFeatures) <$> askServerConfigCtx
+      !defaultNC <- bindA -< _sccDefaultNamingConvention <$> askServerConfigCtx
+      !isNamingConventionEnabled <- bindA -< ((EFNamingConventions `elem`) . _sccExperimentalFeatures) <$> askServerConfigCtx
 
       -- sources are build in two steps
       -- first we resolve them, and build the table cache
@@ -699,7 +702,7 @@ buildSchemaCacheRule logger env = proc (metadata, invalidationKeys) -> do
                     (exists, (invalidationKeys, defaultNC, isNamingConventionEnabled))
             )
         |) (M.fromList $ OMap.toList backendConfigAndSourceMetadata)
-          >-> (\infos -> M.catMaybes infos >- returnA)
+          >-> (\infos -> catMaybes infos >- returnA)
 
       -- then we can build the entire source output
       -- we need to have the table cache of all sources to build cross-sources relationships
@@ -801,7 +804,7 @@ buildSchemaCacheRule logger env = proc (metadata, invalidationKeys) -> do
                       returnA
                         -<
                           ( remoteSchemaCtx
-                              { _rscPermissions = M.catMaybes $ M.fromList resolvedPermissions,
+                              { _rscPermissions = catMaybes $ M.fromList resolvedPermissions,
                                 _rscRemoteRelationships = OMap.catMaybes <$> OMap.fromList resolvedRelationships
                               },
                             metadataObj
@@ -958,7 +961,7 @@ buildSchemaCacheRule logger env = proc (metadata, invalidationKeys) -> do
           Inc.keyed
             (\remoteSchemaName infos -> combine -< (remoteSchemaName, infos))
           |) (align baseInfo extraInfo)
-      returnA -< M.catMaybes combinedInfo
+      returnA -< catMaybes combinedInfo
       where
         combine :: (RemoteSchemaName, These a [b]) `arr` Maybe (a, [b])
         combine = proc (remoteSchemaName, infos) -> case infos of

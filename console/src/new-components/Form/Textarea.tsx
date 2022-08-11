@@ -10,10 +10,6 @@ export type TextareaProps = FieldWrapperPassThroughProps & {
    */
   name: string;
   /**
-   * The textarea size
-   */
-  size?: 'full' | 'medium';
-  /**
    * The textarea visible rows number
    */
   rowsNumber?: number;
@@ -28,7 +24,6 @@ export type TextareaProps = FieldWrapperPassThroughProps & {
 };
 
 export const Textarea: React.FC<TextareaProps> = ({
-  size = 'full',
   rowsNumber = 3,
   name,
   placeholder,
@@ -43,18 +38,8 @@ export const Textarea: React.FC<TextareaProps> = ({
 
   const maybeError = get(errors, name) as FieldError | undefined;
   return (
-    <FieldWrapper
-      id={name}
-      {...wrapperProps}
-      className={size === 'medium' ? 'w-1/2 max-w-lg' : 'w-full max-w-xl'}
-      error={maybeError}
-    >
-      <div
-        className={clsx(
-          'relative',
-          size === 'medium' ? 'w-1/2 max-w-lg' : 'w-full max-w-xl'
-        )}
-      >
+    <FieldWrapper id={name} {...wrapperProps} error={maybeError}>
+      <div className={clsx('relative')}>
         <textarea
           id={name}
           rows={rowsNumber}
@@ -62,7 +47,7 @@ export const Textarea: React.FC<TextareaProps> = ({
           aria-label={wrapperProps.label}
           data-test={dataTest}
           className={clsx(
-            'block w-full max-w-xl shadow-sm rounded border border-gray-300 hover:border-gray-400 focus:outline-0 focus:ring-2 focus:ring-yellow-200 focus:border-yellow-400 placeholder-gray-500',
+            'block w-full max-w-xl shadow-sm rounded border border-gray-300 hover:border-gray-400 focus-visible:outline-0 focus-visible:ring-2 focus-visible:ring-yellow-200 focus-visible:border-yellow-400 placeholder-gray-500',
             maybeError
               ? 'border-red-600 hover:border-red-700'
               : 'border-gray-300',

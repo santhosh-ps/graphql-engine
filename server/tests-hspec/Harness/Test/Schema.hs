@@ -14,6 +14,7 @@ module Harness.Test.Schema
     BackendScalarValue (..),
     BackendScalarValueType (..),
     ManualRelationship (..),
+    SchemaName (..),
     quotedValue,
     unquotedValue,
     backendScalarValue,
@@ -31,6 +32,7 @@ module Harness.Test.Schema
     untrackRelationships,
     mkObjectRelationshipName,
     mkArrayRelationshipName,
+    getSchemaName,
   )
 where
 
@@ -40,16 +42,15 @@ import Data.Aeson
     (.=),
   )
 import Data.Aeson.Key qualified as K
-import Data.Foldable (for_)
-import Data.Text (Text, pack)
 import Data.Time (UTCTime, defaultTimeLocale)
 import Data.Time.Format (parseTimeOrError)
 import Harness.Exceptions
 import Harness.GraphqlEngine qualified as GraphqlEngine
 import Harness.Quoter.Yaml (yaml)
-import Harness.Test.Context (BackendType, defaultBackendTypeString, defaultSchema, defaultSource, schemaKeyword)
+import Harness.Test.BackendType
+import Harness.Test.SchemaName
 import Harness.TestEnvironment (TestEnvironment)
-import Prelude
+import Hasura.Prelude
 
 -- | Generic type to use to specify schema tables for all backends.
 -- Usually a list of these make up a "schema" to pass to the respective
@@ -260,7 +261,7 @@ parseUTCTimeOrError = VUTCTime . parseTimeOrError True defaultTimeLocale "%F %T"
 trackTable :: HasCallStack => BackendType -> String -> Table -> TestEnvironment -> IO ()
 trackTable backend source Table {tableName} testEnvironment = do
   let backendType = defaultBackendTypeString backend
-      schema = defaultSchema backend
+      schema = getSchemaName testEnvironment
       requestType = backendType <> "_track_table"
   GraphqlEngine.postMetadata_
     testEnvironment
@@ -277,7 +278,7 @@ args:
 untrackTable :: HasCallStack => BackendType -> String -> Table -> TestEnvironment -> IO ()
 untrackTable backend source Table {tableName} testEnvironment = do
   let backendType = defaultBackendTypeString backend
-      schema = defaultSchema backend
+      schema = getSchemaName testEnvironment
   let requestType = backendType <> "_untrack_table"
   GraphqlEngine.postMetadata_
     testEnvironment
@@ -298,11 +299,11 @@ mkObjectRelationshipName Reference {referenceLocalColumn, referenceTargetTable, 
 -- | Unified track object relationships
 trackObjectRelationships :: HasCallStack => BackendType -> Table -> TestEnvironment -> IO ()
 trackObjectRelationships backend Table {tableName, tableReferences, tableManualRelationships} testEnvironment = do
+  let schema = getSchemaName testEnvironment
   let source = defaultSource backend
-      schema = defaultSchema backend
       tableObj =
         object
-          [ schemaKeyword backend .= String (pack schema),
+          [ schemaKeyword backend .= String (unSchemaName schema),
             "name" .= String tableName
           ]
       requestType = source <> "_create_object_relationship"
@@ -323,7 +324,7 @@ args:
     let relationshipName = mkObjectRelationshipName ref
         targetTableObj =
           object
-            [ schemaKeyword backend .= String (pack schema),
+            [ schemaKeyword backend .= String (unSchemaName schema),
               "name" .= String referenceTargetTable
             ]
         manualConfiguration :: Value
@@ -354,11 +355,11 @@ mkArrayRelationshipName tableName referenceLocalColumn referenceTargetColumn =
 -- | Unified track array relationships
 trackArrayRelationships :: HasCallStack => BackendType -> Table -> TestEnvironment -> IO ()
 trackArrayRelationships backend Table {tableName, tableReferences, tableManualRelationships} testEnvironment = do
+  let schema = getSchemaName testEnvironment
   let source = defaultSource backend
-      schema = defaultSchema backend
       tableObj =
         object
-          [ schemaKeyword backend .= String (pack schema),
+          [ schemaKeyword backend .= String (unSchemaName schema),
             "name" .= String tableName
           ]
       requestType = source <> "_create_array_relationship"
@@ -366,7 +367,7 @@ trackArrayRelationships backend Table {tableName, tableReferences, tableManualRe
     let relationshipName = mkArrayRelationshipName tableName referenceTargetColumn referenceLocalColumn
         targetTableObj =
           object
-            [ schemaKeyword backend .= String (pack schema),
+            [ schemaKeyword backend .= String (unSchemaName schema),
               "name" .= String referenceTargetTable
             ]
     GraphqlEngine.postMetadata_
@@ -386,7 +387,7 @@ args:
     let relationshipName = mkArrayRelationshipName tableName referenceTargetColumn referenceLocalColumn
         targetTableObj =
           object
-            [ schemaKeyword backend .= String (pack schema),
+            [ schemaKeyword backend .= String (unSchemaName schema),
               "name" .= String referenceTargetTable
             ]
         manualConfiguration :: Value
@@ -413,11 +414,11 @@ args:
 -- | Unified untrack relationships
 untrackRelationships :: HasCallStack => BackendType -> Table -> TestEnvironment -> IO ()
 untrackRelationships backend Table {tableName, tableReferences, tableManualRelationships} testEnvironment = do
+  let schema = getSchemaName testEnvironment
   let source = defaultSource backend
-      schema = defaultSchema backend
       tableObj =
         object
-          [ schemaKeyword backend .= String (pack schema),
+          [ schemaKeyword backend .= String (unSchemaName schema),
             "name" .= String tableName
           ]
       requestType = source <> "_drop_relationship"
@@ -426,7 +427,7 @@ untrackRelationships backend Table {tableName, tableReferences, tableManualRelat
         objectRelationshipName = mkObjectRelationshipName ref
         targetTableObj =
           object
-            [ schemaKeyword backend .= String (pack schema),
+            [ schemaKeyword backend .= String (unSchemaName schema),
               "name" .= String referenceTargetTable
             ]
     finally

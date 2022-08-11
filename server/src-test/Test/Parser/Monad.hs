@@ -11,12 +11,14 @@ module Test.Parser.Monad
   )
 where
 
+import Control.Monad.Memoize
 import Data.Aeson.Internal (JSONPathElement)
 import Data.Has (Has (..))
 import Data.Text qualified as T
-import Hasura.Base.Error (Code, QErr)
+import Hasura.Base.Error (QErr)
 import Hasura.Base.ErrorMessage
-import Hasura.GraphQL.Parser.Class (MonadParse (..), MonadSchema (..))
+import Hasura.GraphQL.Parser.Class
+import Hasura.GraphQL.Parser.ErrorCode
 import Hasura.GraphQL.Schema.Common (SchemaContext (..), SchemaKind (..), ignoreRemoteRelationship)
 import Hasura.GraphQL.Schema.NamingCase
 import Hasura.GraphQL.Schema.Options (SchemaOptions (..))
@@ -24,7 +26,7 @@ import Hasura.GraphQL.Schema.Options qualified as Options
 import Hasura.GraphQL.Schema.Typename
 import Hasura.Prelude
 import Hasura.RQL.Types.SourceCustomization (CustomizeRemoteFieldName, MkRootFieldName)
-import Hasura.Session (RoleName, adminRoleName)
+import Hasura.Session (adminRoleName)
 import Language.Haskell.TH.Syntax qualified as TH
 import Test.Hspec
 
@@ -50,13 +52,6 @@ instance Has NamingCase SchemaEnvironment where
   modifier :: (NamingCase -> NamingCase) -> SchemaEnvironment -> SchemaEnvironment
   modifier = notImplemented "modifier<Has NamingCase SchemaEnvironment>"
 
-instance Has RoleName SchemaEnvironment where
-  getter :: SchemaEnvironment -> RoleName
-  getter = const adminRoleName
-
-  modifier :: (RoleName -> RoleName) -> SchemaEnvironment -> SchemaEnvironment
-  modifier = notImplemented "modifier<Has RoleName SchemaEnvironment>"
-
 instance Has SchemaOptions SchemaEnvironment where
   getter :: SchemaEnvironment -> SchemaOptions
   getter =
@@ -77,7 +72,8 @@ instance Has SchemaContext SchemaEnvironment where
     const
       SchemaContext
         { scSchemaKind = HasuraSchema,
-          scRemoteRelationshipParserBuilder = ignoreRemoteRelationship
+          scRemoteRelationshipParserBuilder = ignoreRemoteRelationship,
+          scRole = adminRoleName
         }
 
   modifier :: (SchemaContext -> SchemaContext) -> SchemaEnvironment -> SchemaEnvironment
@@ -137,14 +133,14 @@ newtype ParserTestT a = ParserTestT (Either (IO ()) a)
   deriving stock (Functor)
   deriving (Applicative, Monad) via (Either (IO ()))
 
-instance MonadSchema ParserTestT SchemaTestT where
-  memoizeOn :: TH.Name -> a -> SchemaTestT (p ParserTestT b) -> SchemaTestT (p ParserTestT b)
+instance MonadMemoize SchemaTestT where
+  memoizeOn :: TH.Name -> a -> SchemaTestT p -> SchemaTestT p
   memoizeOn _ _ = id
 
 instance MonadParse ParserTestT where
   withKey :: JSONPathElement -> ParserTestT a -> ParserTestT a
   withKey = const id
 
-  parseErrorWith :: Code -> ErrorMessage -> ParserTestT a
+  parseErrorWith :: ParseErrorCode -> ErrorMessage -> ParserTestT a
   parseErrorWith code text =
     ParserTestT . Left . expectationFailure $ show code <> ": " <> T.unpack (fromErrorMessage text)

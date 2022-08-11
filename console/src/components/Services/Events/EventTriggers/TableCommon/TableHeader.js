@@ -11,7 +11,7 @@ import {
 import { EVENTS_SERVICE_HEADING } from '../../constants';
 
 const TableHeader = ({ triggerName, tabName, count, readOnlyMode }) => {
-  const styles = require('./EventTable.scss');
+  const styles = require('./EventTable.module.scss');
   let showCount = '';
   if (!(count === null || count === undefined)) {
     showCount = '(' + count + ')';
@@ -50,12 +50,14 @@ const TableHeader = ({ triggerName, tabName, count, readOnlyMode }) => {
 
   return (
     <div>
-      <Helmet
-        title={getReactHelmetTitle(
-          `${activeTab} - ${triggerName}`,
-          EVENTS_SERVICE_HEADING
-        )}
-      />
+      <Helmet>
+        <title data-heap-redact-text="true">
+          {getReactHelmetTitle(
+            `${activeTab} - ${triggerName}`,
+            EVENTS_SERVICE_HEADING
+          )}
+        </title>
+      </Helmet>
       <div className={styles.subHeader}>
         <BreadCrumb breadCrumbs={getBreadCrumbs()} />
         <h2 className={styles.heading_text}>{triggerName}</h2>

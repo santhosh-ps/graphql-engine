@@ -11,7 +11,7 @@ import {
   getSelectQuery,
   getRunSqlQuery,
   WhereClause,
-} from '../../src/components/Common/utils/v1QueryUtils';
+} from '../components/Common/utils/v1QueryUtils';
 import { Driver } from '.';
 import { PostgresTrigger } from './services/postgresql/types';
 
@@ -182,6 +182,7 @@ export type CustomRootFields = {
   select?: Nullable<string> | CustomRootField;
   select_by_pk?: Nullable<string> | CustomRootField;
   select_aggregate?: Nullable<string> | CustomRootField;
+  select_stream?: Nullable<string> | CustomRootField;
   insert?: Nullable<string> | CustomRootField;
   insert_one?: Nullable<string> | CustomRootField;
   update?: Nullable<string> | CustomRootField;
@@ -419,6 +420,7 @@ export type SupportedFeaturesType = {
     isolation_level: boolean;
     connectionSettings: boolean;
     retries: boolean;
+    extensions_schema: boolean;
     pool_timeout: boolean;
     connection_lifetime: boolean;
     ssl_certificates: boolean;

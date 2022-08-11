@@ -13,7 +13,6 @@ module Harness.Test.Context
     BackendType (..),
     defaultSource,
     defaultBackendTypeString,
-    defaultSchema,
     schemaKeyword,
     noLocalTestEnvironment,
     Options (..),
@@ -23,16 +22,15 @@ module Harness.Test.Context
   )
 where
 
-import Control.Applicative ((<|>))
-import Data.Foldable (for_)
-import Data.Maybe (fromMaybe)
+import Data.UUID.V4 (nextRandom)
 import Harness.Exceptions
 import Harness.Test.BackendType
+import Harness.Test.CustomOptions
 import Harness.Test.Hspec.Extended
-import Harness.TestEnvironment (TestEnvironment)
+import Harness.TestEnvironment (TestEnvironment (..))
+import Hasura.Prelude
 import Test.Hspec (ActionWith, SpecWith, aroundAllWith, describe)
 import Test.Hspec.Core.Spec (mapSpecItem)
-import Prelude
 
 --------------------------------------------------------------------------------
 -- Context
@@ -50,7 +48,7 @@ import Prelude
 --
 -- For a more general version that can run tests for any 'Context'@ a@, see
 -- 'runWithLocalTestEnvironment'.
-run :: [Context ()] -> (Options -> SpecWith TestEnvironment) -> SpecWith TestEnvironment
+run :: NonEmpty (Context ()) -> (Options -> SpecWith TestEnvironment) -> SpecWith TestEnvironment
 run contexts tests = do
   let mappedTests opts =
         mapSpecItem
@@ -84,7 +82,7 @@ actionWithTestEnvironmentMapping actionWith (testEnvironment, _) = actionWith te
 -- See 'Context' for details.
 runWithLocalTestEnvironment ::
   forall a.
-  [Context a] ->
+  NonEmpty (Context a) ->
   (Options -> SpecWith (TestEnvironment, a)) ->
   SpecWith TestEnvironment
 runWithLocalTestEnvironment contexts tests =
@@ -102,10 +100,22 @@ contextBracket ::
   ((TestEnvironment, a) -> IO ()) ->
   TestEnvironment ->
   IO ()
-contextBracket Context {mkLocalTestEnvironment, setup, teardown} actionWith globalTestEnvironment =
+contextBracket Context {name, mkLocalTestEnvironment, setup, teardown} actionWith globalTestEnvironment =
   mask \restore -> do
     localTestEnvironment <- mkLocalTestEnvironment globalTestEnvironment
-    let testEnvironment = (globalTestEnvironment, localTestEnvironment)
+
+    -- create a unique id to differentiate this set of tests
+    uniqueTestId <- nextRandom
+
+    let globalTestEnvWithUnique =
+          globalTestEnvironment
+            { backendType = case name of
+                Backend db -> Just db
+                _ -> Nothing,
+              uniqueTestId = uniqueTestId
+            }
+
+    let testEnvironment = (globalTestEnvWithUnique, localTestEnvironment)
 
     _ <-
       catchRethrow
@@ -117,6 +127,7 @@ contextBracket Context {mkLocalTestEnvironment, setup, teardown} actionWith glob
       catchRethrow
         (restore $ actionWith testEnvironment)
         (teardown testEnvironment)
+
     -- If no exception occurred, run the normal teardown function.
     teardown testEnvironment
 
@@ -218,37 +229,3 @@ instance Show ContextName where
 -- | Default function for 'mkLocalTestEnvironment' when there's no local testEnvironment.
 noLocalTestEnvironment :: TestEnvironment -> IO ()
 noLocalTestEnvironment _ = pure ()
-
-data Options = Options
-  { -- | Whether a given testing 'Context' should treat numeric values as
-    -- strings.
-    --
-    -- This is primarily a workaround for tests which run BigQuery.
-    stringifyNumbers :: Bool
-  }
-
--- | This function can be used to combine two sets of 'Option's when creating
--- custom composite 'Context's.
---
--- NOTE: This function throws an impure exception if the options are
--- irreconcilable.
-combineOptions :: HasCallStack => Maybe Options -> Maybe Options -> Maybe Options
-combineOptions (Just lhs) (Just rhs) =
-  let -- 'stringifyNumbers' can only be unified if both sides have the same value.
-      stringifyNumbers =
-        if lhsStringify == rhsStringify
-          then lhsStringify
-          else reportInconsistency "stringifyNumbers" lhsStringify rhsStringify
-   in Just Options {..}
-  where
-    reportInconsistency fieldName lhsValue rhsValue =
-      error $ "Could not reconcile '" <> fieldName <> "'\n  lhs value: " <> show lhsValue <> "\n  rhs value: " <> show rhsValue
-    Options {stringifyNumbers = lhsStringify} = lhs
-    Options {stringifyNumbers = rhsStringify} = rhs
-combineOptions mLhs mRhs = mLhs <|> mRhs
-
-defaultOptions :: Options
-defaultOptions =
-  Options
-    { stringifyNumbers = False
-    }

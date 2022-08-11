@@ -1,11 +1,7 @@
-﻿import { QueryRequest, TableRelationships, Relationship, Query, Field, OrderBy, Expression, BinaryComparisonOperator, UnaryComparisonOperator, BinaryArrayComparisonOperator, ComparisonColumn, ComparisonValue, ScalarValue, QueryResponse } from "./types";
-import { coerceUndefinedToNull, crossProduct, unreachable, zip } from "./util";
+﻿import { QueryRequest, TableRelationships, Relationship, Query, Field, OrderBy, Expression, BinaryComparisonOperator, UnaryComparisonOperator, BinaryArrayComparisonOperator, ComparisonColumn, ComparisonValue, ScalarValue, QueryResponse, Aggregate, SingleColumnAggregate, ColumnCountAggregate, TableName } from "./types";
+import { coerceUndefinedToNull, crossProduct, tableNameEquals, unreachable, zip } from "./util";
+import * as math from "mathjs";
 
-type StaticData = {
-  [tableName: string]: Record<string, ScalarValue>[]
-}
-
-type TableName = string
 type RelationshipName = string
 
 type ProjectedRow = {
@@ -186,7 +182,7 @@ const paginateRows = (rows: Record<string, ScalarValue>[], offset: number | null
 };
 
 const makeFindRelationship = (allTableRelationships: TableRelationships[], tableName: TableName) => (relationshipName: RelationshipName): Relationship => {
-  const relationship = allTableRelationships.find(r => r.source_table === tableName)?.relationships?.[relationshipName];
+  const relationship = allTableRelationships.find(r => tableNameEquals(r.source_table)(tableName))?.relationships?.[relationshipName];
   if (relationship === undefined)
     throw `No relationship named ${relationshipName} found for table ${tableName}`;
   else
@@ -309,9 +305,76 @@ const projectRow = (fields: Record<string, Field>, findRelationship: (relationsh
   return projectedRow;
 };
 
-export const queryData = (staticData: StaticData, queryRequest: QueryRequest) => {
+const starCountAggregateFunction = (rows: Record<string, ScalarValue>[]): ScalarValue => {
+  return rows.length;
+};
+
+const columnCountAggregateFunction = (aggregate: ColumnCountAggregate) => (rows: Record<string, ScalarValue>[]): ScalarValue => {
+  const nonNullValues = rows.map(row => row[aggregate.column]).filter(v => v !== null);
+
+  return aggregate.distinct
+    ? (new Set(nonNullValues)).size
+    : nonNullValues.length;
+};
+
+const isNumberArray = (values: ScalarValue[]): values is number[] => {
+  return values.every(v => typeof v === "number");
+};
+
+const isComparableArray = (values: ScalarValue[]): values is (number | string)[] => {
+  return values.every(v => typeof v === "number" || typeof v === "string");
+};
+
+const singleColumnAggregateFunction = (aggregate: SingleColumnAggregate) => (rows: Record<string, ScalarValue>[]): ScalarValue => {
+  const values = rows.map(row => row[aggregate.column]).filter((v): v is Exclude<ScalarValue, null> => v !== null);
+  if (values.length === 0)
+    return null;
+
+  if (!isComparableArray(values)) {
+    throw new Error(`Found non-comparable scalar values when computing ${aggregate.function}`);
+  }
+  switch (aggregate.function) {
+    case "max": return values.reduce((prev, curr) => prev > curr ? prev : curr);
+    case "min": return values.reduce((prev, curr) => prev < curr ? prev : curr);
+  }
+
+  if (!isNumberArray(values)) {
+    throw new Error(`Found non-numeric scalar values when computing ${aggregate.function}`);
+  }
+  switch (aggregate.function) {
+    case "avg":
+      return math.mean(values);
+    case "stddev_pop": return math.std(values, "uncorrected");
+    case "stddev_samp": return math.std(values, "unbiased");
+    case "sum": return math.sum(values);
+    case "var_pop": return math.variance(values, "uncorrected");
+    case "var_samp": return math.variance(values, "unbiased");
+    default:
+      return unreachable(aggregate.function);
+  }
+};
+
+const getAggregateFunction = (aggregate: Aggregate): ((rows: Record<string, ScalarValue>[]) => ScalarValue) => {
+  switch (aggregate.type) {
+    case "star_count":
+      return starCountAggregateFunction;
+    case "column_count":
+      return columnCountAggregateFunction(aggregate);
+    case "single_column":
+      return singleColumnAggregateFunction(aggregate);
+  }
+};
+
+const calculateAggregates = (rows: Record<string, ScalarValue>[], aggregateRequest: Record<string, Aggregate>): Record<string, ScalarValue> => {
+  return Object.fromEntries(Object.entries(aggregateRequest).map(([fieldName, aggregate]) => {
+    const aggregateValue = getAggregateFunction(aggregate)(rows);
+    return [fieldName, aggregateValue];
+  }));
+};
+
+export const queryData = (getTable: (tableName: TableName) => Record<string, ScalarValue>[] | undefined, queryRequest: QueryRequest) => {
   const performQuery = (tableName: TableName, query: Query): QueryResponse => {
-    const rows = staticData[tableName];
+    const rows = getTable(tableName);
     if (rows === undefined) {
       throw `${tableName} is not a valid table`;
     }
@@ -320,12 +383,15 @@ export const queryData = (staticData: StaticData, queryRequest: QueryRequest) =>
 
     const filteredRows = rows.filter(makeFilterPredicate(query.where ?? null, getComparisonColumnValues));
     const sortedRows = sortRows(filteredRows, query.order_by ?? []);
-    const slicedRows = paginateRows(sortedRows, query.offset ?? null, query.limit ?? null);
+    const paginatedRows = paginateRows(sortedRows, query.offset ?? null, query.limit ?? null);
     const projectedRows = query.fields
-      ? slicedRows.map(projectRow(query.fields, findRelationship, performQuery))
-      : [];
+      ? paginatedRows.map(projectRow(query.fields, findRelationship, performQuery))
+      : null;
+    const calculatedAggregates = query.aggregates
+      ? calculateAggregates(paginatedRows, query.aggregates)
+      : null;
     return {
-      aggregates: null, // TODO(dchambers): Aggregates support
+      aggregates: calculatedAggregates,
       rows: projectedRows,
     }
   }

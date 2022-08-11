@@ -355,6 +355,7 @@ export const mergeDataMssql = (
       view_info: null,
       remote_relationships: remoteRelationships,
       is_enum: false,
+      is_apollo_federation_supported: !!metadataTable?.apollo_federation_config,
       configuration: metadataTable?.configuration as Table['configuration'],
       computed_fields: [],
     };
@@ -427,12 +428,14 @@ export const mergeLoadSchemaDataPostgres = (
     let refFkConstraints: Table['foreign_key_constraints'] = [];
     let remoteRelationships: Table['remote_relationships'] = [];
     let isEnum = false;
+    let isApolloFederationSupported = false;
     let configuration = {};
     let computed_fields: Table['computed_fields'] = [];
     const relationships: Table['relationships'] = [];
 
     if (metadataTable) {
       isEnum = metadataTable?.is_enum || false;
+      isApolloFederationSupported = !!metadataTable?.apollo_federation_config;
       configuration = metadataTable?.configuration || {};
 
       fkConstraints = trackedFkData.filter(
@@ -462,7 +465,8 @@ export const mergeLoadSchemaDataPostgres = (
         name: field.name,
         table_name: tableName,
         table_schema: tableSchema,
-        definition: field.definition as Table['computed_fields'][0]['definition'],
+        definition:
+          field.definition as Table['computed_fields'][0]['definition'],
       }));
 
       metadataTable?.array_relationships?.forEach(rel => {
@@ -529,6 +533,7 @@ export const mergeLoadSchemaDataPostgres = (
       view_info: viewInfo as Table['view_info'],
       remote_relationships: remoteRelationships,
       is_enum: isEnum,
+      is_apollo_federation_supported: isApolloFederationSupported,
       configuration: configuration as Table['configuration'],
       computed_fields,
     };
@@ -736,12 +741,14 @@ export const mergeDataCitus = (
     let refFkConstraints: Table['foreign_key_constraints'] = [];
     let remoteRelationships: Table['remote_relationships'] = [];
     let isEnum = false;
+    let isApolloFederationSupported = false;
     let configuration = {};
     let computed_fields: Table['computed_fields'] = [];
     const relationships: Table['relationships'] = [];
 
     if (metadataTable) {
       isEnum = metadataTable?.is_enum ?? false;
+      isApolloFederationSupported = !!metadataTable?.apollo_federation_config;
       configuration = metadataTable?.configuration ?? {};
 
       fkConstraints = trackedFkData.filter(
@@ -771,7 +778,8 @@ export const mergeDataCitus = (
         name: field.name,
         table_name: tableName,
         table_schema: tableSchema,
-        definition: field.definition as Table['computed_fields'][0]['definition'],
+        definition:
+          field.definition as Table['computed_fields'][0]['definition'],
       }));
 
       metadataTable?.array_relationships?.forEach(rel => {
@@ -838,6 +846,7 @@ export const mergeDataCitus = (
       view_info: viewInfo as Table['view_info'],
       remote_relationships: remoteRelationships,
       is_enum: isEnum,
+      is_apollo_federation_supported: isApolloFederationSupported,
       configuration: configuration as Table['configuration'],
       computed_fields,
       citus_table_type,

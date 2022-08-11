@@ -52,14 +52,14 @@ import Hasura.GraphQL.Schema.Parser
     FieldParser,
     InputFieldsParser,
     Kind (..),
+    MonadMemoize,
     MonadParse,
-    MonadSchema,
     Parser,
     memoize,
   )
 import Hasura.GraphQL.Schema.Parser qualified as P
 import Hasura.GraphQL.Schema.Select
-import Hasura.GraphQL.Schema.Table
+import Hasura.GraphQL.Schema.Table (getTableGQLName, tableColumns)
 import Hasura.GraphQL.Schema.Typename
 import Hasura.GraphQL.Schema.Update qualified as SU
 import Hasura.Name qualified as Name
@@ -78,7 +78,7 @@ import Hasura.RQL.Types.Column
 import Hasura.RQL.Types.Function (FunctionInfo)
 import Hasura.RQL.Types.Source
 import Hasura.RQL.Types.SourceCustomization
-import Hasura.RQL.Types.Table (CustomRootField (..), RolePermInfo (..), TableConfig (..), TableCoreInfoG (..), TableCustomRootFields (..), TableInfo (..), UpdPermInfo (..), ViewInfo (..), isMutable, tableInfoName)
+import Hasura.RQL.Types.Table (CustomRootField (..), RolePermInfo (..), TableConfig (..), TableCoreInfoG (..), TableCustomRootFields (..), TableInfo (..), UpdPermInfo (..), ViewInfo (..), getRolePermInfo, isMutable, tableInfoName)
 import Hasura.SQL.Backend (BackendType (Postgres), PostgresKind (Citus, Vanilla))
 import Hasura.SQL.Tag (HasTag)
 import Hasura.SQL.Types
@@ -98,7 +98,9 @@ import Language.GraphQL.Draft.Syntax qualified as G
 -- ('Postgres pgKind)` instead.
 class PostgresSchema (pgKind :: PostgresKind) where
   pgkBuildTableRelayQueryFields ::
-    BS.MonadBuildSchema ('Postgres pgKind) r m n =>
+    forall r m n.
+    MonadBuildSchema ('Postgres pgKind) r m n =>
+    MkRootFieldName ->
     SourceInfo ('Postgres pgKind) ->
     TableName ('Postgres pgKind) ->
     TableInfo ('Postgres pgKind) ->
@@ -106,7 +108,9 @@ class PostgresSchema (pgKind :: PostgresKind) where
     NESeq (ColumnInfo ('Postgres pgKind)) ->
     m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
   pgkBuildFunctionRelayQueryFields ::
-    BS.MonadBuildSchema ('Postgres pgKind) r m n =>
+    forall r m n.
+    MonadBuildSchema ('Postgres pgKind) r m n =>
+    MkRootFieldName ->
     SourceInfo ('Postgres pgKind) ->
     FunctionName ('Postgres pgKind) ->
     FunctionInfo ('Postgres pgKind) ->
@@ -122,8 +126,8 @@ instance PostgresSchema 'Vanilla where
   pgkRelayExtension = Just ()
 
 instance PostgresSchema 'Citus where
-  pgkBuildTableRelayQueryFields _ _ _ _ _ = pure []
-  pgkBuildFunctionRelayQueryFields _ _ _ _ _ = pure []
+  pgkBuildTableRelayQueryFields _ _ _ _ _ _ = pure []
+  pgkBuildFunctionRelayQueryFields _ _ _ _ _ _ = pure []
   pgkRelayExtension = Nothing
 
 -- postgres schema
@@ -194,27 +198,31 @@ backendInsertParser sourceName tableInfo =
 -- Top level parsers
 
 buildTableRelayQueryFields ::
-  forall pgKind m n r.
-  MonadBuildSchema ('Postgres pgKind) r m n =>
-  BackendTableSelectSchema ('Postgres pgKind) =>
+  forall r m n pgKind.
+  ( MonadBuildSchema ('Postgres pgKind) r m n,
+    BackendTableSelectSchema ('Postgres pgKind)
+  ) =>
+  MkRootFieldName ->
   SourceInfo ('Postgres pgKind) ->
   TableName ('Postgres pgKind) ->
   TableInfo ('Postgres pgKind) ->
   C.GQLNameIdentifier ->
   NESeq (ColumnInfo ('Postgres pgKind)) ->
   m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
-buildTableRelayQueryFields sourceName tableName tableInfo gqlName pkeyColumns = do
+buildTableRelayQueryFields mkRootFieldName sourceName tableName tableInfo gqlName pkeyColumns = do
   tCase <- asks getter
   let fieldDesc = Just $ G.Description $ "fetch data from the table: " <>> tableName
-  rootFieldName <- mkRootFieldName $ applyFieldNameCaseIdentifier tCase (mkRelayConnectionField gqlName)
+      rootFieldName = runMkRootFieldName mkRootFieldName $ applyFieldNameCaseIdentifier tCase (mkRelayConnectionField gqlName)
   fmap afold $
     optionalFieldParser QDBConnection $
       selectTableConnection sourceName tableInfo rootFieldName fieldDesc pkeyColumns
 
 pgkBuildTableUpdateMutationFields ::
-  PostgresSchema pgKind =>
-  MonadBuildSchema ('Postgres pgKind) r m n =>
-  BackendTableSelectSchema ('Postgres pgKind) =>
+  forall r m n pgKind.
+  ( MonadBuildSchema ('Postgres pgKind) r m n,
+    BackendTableSelectSchema ('Postgres pgKind)
+  ) =>
+  MkRootFieldName ->
   Scenario ->
   -- | The source that the table lives in
   SourceInfo ('Postgres pgKind) ->
@@ -225,15 +233,17 @@ pgkBuildTableUpdateMutationFields ::
   -- | field display name
   C.GQLNameIdentifier ->
   m [FieldParser n (IR.AnnotatedUpdateG ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
-pgkBuildTableUpdateMutationFields scenario sourceInfo tableName tableInfo gqlName =
+pgkBuildTableUpdateMutationFields mkRootFieldName scenario sourceInfo tableName tableInfo gqlName = do
+  roleName <- retrieve scRole
   concat . maybeToList <$> runMaybeT do
-    updatePerms <- MaybeT $ _permUpd <$> tablePermissions tableInfo
+    updatePerms <- hoistMaybe $ _permUpd $ getRolePermInfo roleName tableInfo
     lift $ do
       -- update_table and update_table_by_pk
       singleUpdates <-
         GSB.buildTableUpdateMutationFields
           -- TODO: https://github.com/hasura/graphql-engine-mono/issues/2955
           (\ti -> fmap BackendUpdate <$> updateOperators ti updatePerms)
+          mkRootFieldName
           scenario
           sourceInfo
           tableName
@@ -243,6 +253,7 @@ pgkBuildTableUpdateMutationFields scenario sourceInfo tableName tableInfo gqlNam
       -- update_table_many
       multiUpdate <-
         updateTableMany
+          mkRootFieldName
           scenario
           sourceInfo
           tableInfo
@@ -269,25 +280,28 @@ pgkBuildTableUpdateMutationFields scenario sourceInfo tableName tableInfo gqlNam
 -- Note: this will likely require adding a type or a function to
 -- 'BackendSchema'.
 updateTableMany ::
-  forall pgKind r m n.
-  PostgresSchema pgKind =>
-  MonadBuildSchema ('Postgres pgKind) r m n =>
+  forall r m n pgKind.
+  ( MonadBuildSchema ('Postgres pgKind) r m n,
+    BackendTableSelectSchema ('Postgres pgKind)
+  ) =>
+  MkRootFieldName ->
   Scenario ->
   SourceInfo ('Postgres pgKind) ->
   TableInfo ('Postgres pgKind) ->
   C.GQLNameIdentifier ->
   m (Maybe (P.FieldParser n (IR.AnnotatedUpdateG ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))))
-updateTableMany scenario sourceInfo tableInfo gqlName = runMaybeT do
+updateTableMany mkRootFieldName scenario sourceInfo tableInfo gqlName = runMaybeT do
   tCase <- asks getter
+  roleName <- retrieve scRole
   let columns = tableColumns tableInfo
       viewInfo = _tciViewInfo $ _tiCoreInfo tableInfo
   guard $ isMutable viIsUpdatable viewInfo
-  updatePerms <- MaybeT $ _permUpd <$> tablePermissions tableInfo
+  updatePerms <- hoistMaybe $ _permUpd $ getRolePermInfo roleName tableInfo
   guard $ not $ scenario == Frontend && upiBackendOnly updatePerms
   updates <- lift (mkMultiRowUpdateParser sourceInfo tableInfo updatePerms)
   selection <- lift $ P.multiple <$> GSB.mutationSelectionSet sourceInfo tableInfo
-  updateName <- mkRootFieldName $ GSB.setFieldNameCase tCase tableInfo _tcrfUpdateMany mkUpdateManyField gqlName
-  let argsParser = liftA2 (,) updates (pure annBoolExpTrue)
+  let updateName = runMkRootFieldName mkRootFieldName $ GSB.setFieldNameCase tCase tableInfo _tcrfUpdateMany mkUpdateManyField gqlName
+      argsParser = liftA2 (,) updates (pure annBoolExpTrue)
   pure $
     P.subselection updateName updateDesc argsParser selection
       <&> SU.mkUpdateObject tableName columns updatePerms (Just tCase) . fmap MOutMultirowFields
@@ -323,26 +337,28 @@ mkMultiRowUpdateParser sourceInfo tableInfo updatePerms = do
     updatesDesc = "updates to execute, in order"
 
 buildFunctionRelayQueryFields ::
-  forall pgKind m n r.
-  MonadBuildSchema ('Postgres pgKind) r m n =>
-  BackendTableSelectSchema ('Postgres pgKind) =>
+  forall r m n pgKind.
+  ( MonadBuildSchema ('Postgres pgKind) r m n,
+    BackendTableSelectSchema ('Postgres pgKind)
+  ) =>
+  MkRootFieldName ->
   SourceInfo ('Postgres pgKind) ->
   FunctionName ('Postgres pgKind) ->
   FunctionInfo ('Postgres pgKind) ->
   TableName ('Postgres pgKind) ->
   NESeq (ColumnInfo ('Postgres pgKind)) ->
   m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
-buildFunctionRelayQueryFields sourceName functionName functionInfo tableName pkeyColumns = do
+buildFunctionRelayQueryFields mkRootFieldName sourceName functionName functionInfo tableName pkeyColumns = do
   let fieldDesc = Just $ G.Description $ "execute function " <> functionName <<> " which returns " <>> tableName
   fmap afold $
     optionalFieldParser QDBConnection $
-      selectFunctionConnection sourceName functionInfo fieldDesc pkeyColumns
+      selectFunctionConnection mkRootFieldName sourceName functionInfo fieldDesc pkeyColumns
 
 ----------------------------------------------------------------
 -- Individual components
 
 columnParser ::
-  (MonadSchema n m, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
+  (MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
   ColumnType ('Postgres pgKind) ->
   G.Nullability ->
   m (Parser 'Both n (IR.ValueWithOrigin (ColumnValue ('Postgres pgKind))))
@@ -377,7 +393,7 @@ columnParser columnType (G.Nullability isNullable) = do
                   J.Null -> P.parseError $ "unexpected null value for type " <> toErrorValue name
                   value ->
                     runAesonParser (parsePGValue scalarType) value
-                      `onLeft` (P.parseErrorWith ParseFailed . toErrorMessage . qeError)
+                      `onLeft` (P.parseErrorWith P.ParseFailed . toErrorMessage . qeError)
             }
     ColumnEnumReference (EnumReference tableName enumValues tableCustomName) ->
       case nonEmpty (Map.toList enumValues) of
@@ -455,7 +471,8 @@ orderByOperators tCase =
 comparisonExps ::
   forall pgKind m n r.
   ( BackendSchema ('Postgres pgKind),
-    MonadSchema n m,
+    MonadMemoize m,
+    MonadParse n,
     MonadError QErr m,
     MonadReader r m,
     Has SchemaOptions r,
@@ -785,7 +802,7 @@ comparisonExps = memoize 'comparisonExps \columnType -> do
 
 geographyWithinDistanceInput ::
   forall pgKind m n r.
-  (MonadSchema n m, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
+  (MonadMemoize m, MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
   m (Parser 'Input n (DWithinGeogOp (IR.UnpreparedValue ('Postgres pgKind))))
 geographyWithinDistanceInput = do
   geographyParser <- columnParser (ColumnScalar PGGeography) (G.Nullability False)
@@ -805,7 +822,7 @@ geographyWithinDistanceInput = do
 
 geometryWithinDistanceInput ::
   forall pgKind m n r.
-  (MonadSchema n m, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
+  (MonadMemoize m, MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
   m (Parser 'Input n (DWithinGeomOp (IR.UnpreparedValue ('Postgres pgKind))))
 geometryWithinDistanceInput = do
   geometryParser <- columnParser (ColumnScalar PGGeometry) (G.Nullability False)
@@ -817,7 +834,7 @@ geometryWithinDistanceInput = do
 
 intersectsNbandGeomInput ::
   forall pgKind m n r.
-  (MonadSchema n m, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
+  (MonadMemoize m, MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
   m (Parser 'Input n (STIntersectsNbandGeommin (IR.UnpreparedValue ('Postgres pgKind))))
 intersectsNbandGeomInput = do
   geometryParser <- columnParser (ColumnScalar PGGeometry) (G.Nullability False)
@@ -829,7 +846,7 @@ intersectsNbandGeomInput = do
 
 intersectsGeomNbandInput ::
   forall pgKind m n r.
-  (MonadSchema n m, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
+  (MonadMemoize m, MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
   m (Parser 'Input n (STIntersectsGeomminNband (IR.UnpreparedValue ('Postgres pgKind))))
 intersectsGeomNbandInput = do
   geometryParser <- columnParser (ColumnScalar PGGeometry) (G.Nullability False)
@@ -864,7 +881,7 @@ prependOp ::
   ( BackendSchema ('Postgres pgKind),
     MonadReader r m,
     MonadError QErr m,
-    MonadSchema n m,
+    MonadParse n,
     Has MkTypename r,
     Has NamingCase r
   ) =>
@@ -899,7 +916,7 @@ appendOp ::
   ( BackendSchema ('Postgres pgKind),
     MonadReader r m,
     MonadError QErr m,
-    MonadSchema n m,
+    MonadParse n,
     Has MkTypename r,
     Has NamingCase r
   ) =>
@@ -934,7 +951,7 @@ deleteKeyOp ::
   ( BackendSchema ('Postgres pgKind),
     MonadReader r m,
     MonadError QErr m,
-    MonadSchema n m,
+    MonadParse n,
     Has MkTypename r,
     Has NamingCase r
   ) =>
@@ -965,7 +982,7 @@ deleteElemOp ::
   ( BackendSchema ('Postgres pgKind),
     MonadReader r m,
     MonadError QErr m,
-    MonadSchema n m,
+    MonadParse n,
     Has MkTypename r,
     Has NamingCase r
   ) =>
@@ -998,7 +1015,7 @@ deleteAtPathOp ::
   ( BackendSchema ('Postgres pgKind),
     MonadReader r m,
     MonadError QErr m,
-    MonadSchema n m,
+    MonadParse n,
     Has MkTypename r,
     Has NamingCase r
   ) =>

@@ -1,12 +1,12 @@
 import React, { ChangeEvent, Dispatch } from 'react';
 import { FaCheckCircle, FaInfoCircle } from 'react-icons/fa';
-import { ToolTip } from '@/new-components/Tooltip';
+import { IconTooltip } from '@/new-components/Tooltip';
 
 import { ConnectDBActions, ConnectDBState, connectionTypes } from './state';
 import { LabeledInput } from '../../../Common/LabeledInput';
 import { Driver, getSupportedDrivers } from '../../../../dataSources';
 
-import styles from './DataSources.scss';
+import styles from './DataSources.module.scss';
 import JSONEditor from '../TablePermissions/JSONEditor';
 import { SupportedFeaturesType } from '../../../../dataSources/types';
 import { Path } from '../../../Common/utils/tsUtils';
@@ -64,15 +64,12 @@ const driverToLabel: Record<
   mssql: {
     label: 'MS SQL Server',
     defaultConnection: 'DATABASE_URL',
-    info:
-      'Only Database URLs and Environment Variables are available for MS SQL Server',
+    info: 'Only Database URLs and Environment Variables are available for MS SQL Server',
   },
   bigquery: {
     label: 'BigQuery',
     defaultConnection: 'CONNECTION_PARAMETERS',
-    info:
-      'Only Connection Parameters and Environment Variables are available for BigQuery',
-    beta: true,
+    info: 'Only Connection Parameters and Environment Variables are available for BigQuery',
   },
   citus: {
     label: 'Citus',
@@ -186,7 +183,7 @@ const ConnectDatabaseForm: React.FC<ConnectDatabaseFormProps> = ({
           className={`${styles.remove_pad_bottom} mb-md flex items-center gap-1 ${styles.connect_db_header}`}
         >
           {title ?? defaultTitle}
-          <ToolTip message="Environment variable recommended" />
+          <IconTooltip message="Environment variable recommended" />
           <a
             href="https://hasura.io/docs/latest/graphql/cloud/projects/create.html#existing-database"
             target="_blank"
@@ -308,7 +305,7 @@ const ConnectDatabaseForm: React.FC<ConnectDatabaseFormProps> = ({
                   className={`${styles.add_mar_bottom_mid} flex items-center gap-1`}
                 >
                   <b>Service Account Key:</b>
-                  <ToolTip message="Service account key for BigQuery data source" />
+                  <IconTooltip message="Service account key for BigQuery data source" />
                 </div>
                 <JSONEditor
                   minLines={5}
@@ -438,11 +435,32 @@ const ConnectDatabaseForm: React.FC<ConnectDatabaseFormProps> = ({
               />
             </>
           )}
+        {getSupportedDrivers('connectDbForm.extensions_schema').includes(
+          connectionDBState.dbType
+        ) ? (
+          <LabeledInput
+            label="Extensions Schema"
+            onChange={e => {
+              const data =
+                e.target?.value?.length > 1 ? e.target.value : undefined;
+              connectionDBStateDispatch({
+                type: 'UPDATE_EXTENSIONS_SCHEMA',
+                data,
+              });
+            }}
+            type="text"
+            value={connectionDBState.extensionsSchema}
+            placeholder="public"
+            tooltipText="Name of the schema where the graphql-engine will install database extensions (default: `public`). Specified schema should be present in the search path of the database."
+            data-test="extensions_schema"
+          />
+        ) : null}
+
         <ConnectionSettingsForm
           connectionDBState={connectionDBState}
           connectionDBStateDispatch={connectionDBStateDispatch}
         />
-        {/* 
+        {/*
           TODO: remove the edit state condition when the BE issue is solved
           https://github.com/hasura/graphql-engine-mono/issues/4700
         */}

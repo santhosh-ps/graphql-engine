@@ -6,7 +6,7 @@ import PermTableHeader from '../../../Common/Permissions/TableHeader';
 import PermTableBody from '../../../Common/Permissions/TableBody';
 import { permissionsSymbols } from '../../../Common/Permissions/PermissionSymbols';
 import { permOpenEdit, permCloseEdit, permSetRoleName } from './reducer';
-import styles from '../../../Common/Permissions/PermissionStyles.scss';
+import styles from '../../../Common/Permissions/PermissionStyles.module.scss';
 import PermissionEditor from './PermissionEditor';
 import { setDefaults } from './reducer';
 
@@ -165,9 +165,9 @@ const Permissions = ({
 
   return (
     <div>
-      <Helmet
-        title={`Permissions - ${currentAction.name} - Actions | Hasura`}
-      />
+      <Helmet>
+        <title data-heap-redact-text="true">{`Permissions - ${currentAction.name} - Actions | Hasura`}</title>
+      </Helmet>
       {getPermissionsTable()}
       <div className={`${styles.add_mar_bottom}`}>
         {!readOnlyMode && (

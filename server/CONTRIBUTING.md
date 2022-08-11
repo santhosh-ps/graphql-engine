@@ -10,10 +10,13 @@ own machine and how to contribute.
 - There are few system packages required like `libpq-dev`, `libssl-dev`, etc. The best place to get the entire list is from the packager [Dockerfile](../.buildkite/dockerfiles/ci-builders/server-builder.dockerfile)
 - Additional Haskell tools (expected versions can be found in _VERSIONS.json_):
   - [HLint](https://github.com/ndmitchell/hlint), for linting Haskell code
+  - [hpack](https://github.com/sol/hpack), for generating Cabal files
   - [Ormolu](https://github.com/tweag/ormolu), for formatting Haskell code
 
 For building console and running test suite:
 
+- [Docker](https://www.docker.com/get-started/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
 - [Node.js](https://nodejs.org/en/) (v12+, it is recommended that you use `node` with version `v12.x.x` A.K.A `erbium` or version `14.x.x` A.K.A `Fermium`)
 - npm >= 5.7
 - python >= 3.5 with pip3 and virtualenv
@@ -189,7 +192,7 @@ HASURA_GRAPHQL_DATABASE_URL='postgres://<user>:<password>@<host>:<port>/<dbname>
 1. To run the Haskell integration test suite, you'll first need to bring up the database containers:
 
 ```sh
-docker-compose up
+docker compose up
 ```
 
 2. Once the containers are up, you can run the test suite via

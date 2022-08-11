@@ -83,6 +83,7 @@ data RQLMetadataV1
     RMTrackTable !(AnyBackend TrackTableV2)
   | RMUntrackTable !(AnyBackend UntrackTable)
   | RMSetTableCustomization !(AnyBackend SetTableCustomization)
+  | RMSetApolloFederationConfig (AnyBackend SetApolloFederationConfig)
   | -- Tables (PG-specific)
     RMPgSetTableIsEnum !SetTableIsEnum
   | -- Tables permissions
@@ -433,9 +434,10 @@ runMetadataQueryV1M env currentResourceVersion = \case
   RMRenameSource q -> runRenameSource q
   RMUpdateSource q -> dispatchMetadata runUpdateSource q
   RMTrackTable q -> dispatchMetadata runTrackTableV2Q q
-  RMUntrackTable q -> dispatchMetadata runUntrackTableQ q
+  RMUntrackTable q -> dispatchMetadataAndEventTrigger runUntrackTableQ q
   RMSetFunctionCustomization q -> dispatchMetadata runSetFunctionCustomization q
   RMSetTableCustomization q -> dispatchMetadata runSetTableCustomization q
+  RMSetApolloFederationConfig q -> dispatchMetadata runSetApolloFederationConfig q
   RMPgSetTableIsEnum q -> runSetExistingTableIsEnumQ q
   RMCreateInsertPermission q -> dispatchMetadata runCreatePerm q
   RMCreateSelectPermission q -> dispatchMetadata runCreatePerm q

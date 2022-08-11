@@ -14,9 +14,10 @@ const queryClient = new QueryClient({
     },
   },
 });
-const createWrapper = () => ({ children }: { children: React.ReactNode }) => (
-  <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-);
+const createWrapper =
+  () =>
+  ({ children }: { children: React.ReactNode }) =>
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 
 const metadataStub: Metadata = {
   version: 3,
@@ -68,7 +69,7 @@ describe('useTables', () => {
         rest.post('/v1/metadata', (req, res, ctx) => {
           return res(ctx.status(200), ctx.json(metadataStub));
         }),
-        rest.post('/v1/query', (req, res, ctx) => {
+        rest.post('/v2/query', (req, res, ctx) => {
           return res(ctx.status(200), ctx.json(runSqlStub));
         })
       );

@@ -46,11 +46,11 @@ import Hasura.Server.Logging (MetadataLog (..))
 -- Add source
 
 data AddSource b = AddSource
-  { _asName :: !SourceName,
-    _asBackendKind :: !(BackendSourceKind b),
-    _asConfiguration :: !(SourceConnConfiguration b),
-    _asReplaceConfiguration :: !Bool,
-    _asCustomization :: !SourceCustomization
+  { _asName :: SourceName,
+    _asBackendKind :: BackendSourceKind b,
+    _asConfiguration :: SourceConnConfiguration b,
+    _asReplaceConfiguration :: Bool,
+    _asCustomization :: SourceCustomization
   }
 
 instance (Backend b) => FromJSONWithContext (BackendSourceKind b) (AddSource b) where
@@ -82,7 +82,8 @@ runAddSource (AddSource name backendKind sourceConfig replaceConfiguration sourc
               pure $ updateConfig . updateCustomization
             else throw400 AlreadyExists $ "source with name " <> name <<> " already exists"
         else do
-          let sourceMetadata = mkSourceMetadata @b name backendKind sourceConfig sourceCustomization
+          let sourceMetadata =
+                mkSourceMetadata @b name backendKind sourceConfig sourceCustomization
           pure $ metaSources %~ OMap.insert name sourceMetadata
 
   buildSchemaCacheFor (MOSource name) metadataModifier
@@ -92,8 +93,8 @@ runAddSource (AddSource name backendKind sourceConfig replaceConfiguration sourc
 -- Rename source
 
 data RenameSource = RenameSource
-  { _rmName :: !SourceName,
-    _rmNewName :: !SourceName
+  { _rmName :: SourceName,
+    _rmNewName :: SourceName
   }
 
 $(deriveFromJSON hasuraJSON ''RenameSource)
@@ -141,8 +142,8 @@ runRenameSource RenameSource {..} = do
 -- Drop source
 
 data DropSource = DropSource
-  { _dsName :: !SourceName,
-    _dsCascade :: !Bool
+  { _dsName :: SourceName,
+    _dsCascade :: Bool
   }
   deriving (Show, Eq)
 
@@ -244,9 +245,9 @@ runPostDropSourceHook sourceName sourceInfo = do
 -- update source
 
 data UpdateSource b = UpdateSource
-  { _usName :: !SourceName,
-    _usConfiguration :: !(Maybe (SourceConnConfiguration b)),
-    _usCustomization :: !(Maybe SourceCustomization)
+  { _usName :: SourceName,
+    _usConfiguration :: Maybe (SourceConnConfiguration b),
+    _usCustomization :: Maybe SourceCustomization
   }
 
 instance (Backend b) => FromJSONWithContext (BackendSourceKind b) (UpdateSource b) where

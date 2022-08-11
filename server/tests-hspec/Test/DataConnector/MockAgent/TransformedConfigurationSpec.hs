@@ -15,25 +15,28 @@ import Harness.Backend.DataConnector qualified as DataConnector
 import Harness.Quoter.Graphql (graphql)
 import Harness.Quoter.Yaml (yaml)
 import Harness.Test.BackendType (BackendType (..), defaultBackendTypeString, defaultSource)
-import Harness.Test.Context qualified as Context
+import Harness.Test.Fixture qualified as Fixture
 import Harness.TestEnvironment (TestEnvironment)
 import Hasura.Backends.DataConnector.API qualified as API
+import Hasura.Prelude
 import Test.Hspec (SpecWith, describe, it)
-import Prelude
 
 --------------------------------------------------------------------------------
 
 spec :: SpecWith TestEnvironment
 spec =
-  Context.runWithLocalTestEnvironment
-    [ Context.Context
-        { name = Context.Backend Context.DataConnector,
-          mkLocalTestEnvironment = DataConnector.mkLocalTestEnvironmentMock,
-          setup = DataConnector.setupMock sourceMetadata DataConnector.mockBackendConfig,
-          teardown = DataConnector.teardownMock,
-          customOptions = Nothing
-        }
-    ]
+  Fixture.runWithLocalTestEnvironment
+    ( [ (Fixture.fixture $ Fixture.Backend Fixture.DataConnector)
+          { Fixture.mkLocalTestEnvironment = DataConnector.mkLocalTestEnvironmentMock,
+            Fixture.setupTeardown = \(testEnv, mockEnv) ->
+              [ DataConnector.setupMockAction
+                  sourceMetadata
+                  DataConnector.mockBackendConfig
+                  (testEnv, mockEnv)
+              ]
+          }
+      ]
+    )
     tests
 
 sourceMetadata :: Aeson.Value
@@ -44,7 +47,7 @@ sourceMetadata =
         name : *source
         kind: *backendType
         tables:
-          - table: Album
+          - table: [Album]
             configuration:
               custom_root_fields:
                 select: albums
@@ -60,10 +63,10 @@ sourceMetadata =
               - name: artist
                 using:
                   manual_configuration:
-                    remote_table: Artist
+                    remote_table: [Artist]
                     column_mapping:
                       ArtistId: ArtistId
-          - table: Artist
+          - table: [Artist]
             configuration:
               custom_root_fields:
                 select: artists
@@ -77,7 +80,7 @@ sourceMetadata =
               - name: albums
                 using:
                   manual_configuration:
-                    remote_table: Album
+                    remote_table: [Album]
                     column_mapping:
                       ArtistId: ArtistId
         configuration:
@@ -94,7 +97,7 @@ sourceMetadata =
 
 --------------------------------------------------------------------------------
 
-tests :: Context.Options -> SpecWith (TestEnvironment, DataConnector.MockAgentEnvironment)
+tests :: Fixture.Options -> SpecWith (TestEnvironment, DataConnector.MockAgentEnvironment)
 tests opts = do
   describe "Basic Tests" $ do
     it "works with configuration transformation Kriti template" $
@@ -129,7 +132,7 @@ tests opts = do
               { _whenQuery =
                   Just
                     ( API.QueryRequest
-                        { _qrTable = API.TableName "Album",
+                        { _qrTable = API.TableName ("Album" :| []),
                           _qrTableRelationships = [],
                           _qrQuery =
                             API.Query
