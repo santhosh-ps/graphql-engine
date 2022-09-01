@@ -16,17 +16,9 @@ module Hasura.RQL.Types.Common
     isSystemDefined,
     SQLGenCtx (..),
     successMsg,
-    NonNegativeDiffTime,
-    unNonNegativeDiffTime,
-    unsafeNonNegativeDiffTime,
-    mkNonNegativeDiffTime,
     InputWebhook (..),
     ResolvedWebhook (..),
     resolveWebhook,
-    NonNegativeInt,
-    getNonNegativeInt,
-    mkNonNegativeInt,
-    unsafeNonNegativeInt,
     Timeout (..),
     defaultActionTimeoutSecs,
     UrlConf (..),
@@ -48,9 +40,13 @@ module Hasura.RQL.Types.Common
     ApolloFederationConfig (..),
     ApolloFederationVersion (..),
     isApolloFedV1enabled,
+    CapabilitiesInfo (..),
+    mkCapabilitiesInfo,
+    DataConnectorCapabilities (..),
   )
 where
 
+import Autodocodec (HasCodec (codec), dimapCodec)
 import Data.Aeson
 import Data.Aeson qualified as J
 import Data.Aeson.Casing
@@ -64,12 +60,15 @@ import Data.Text.Extended
 import Data.Text.NonEmpty
 import Data.URL.Template
 import Database.PG.Query qualified as Q
+import Hasura.Backends.DataConnector.API.V0.Capabilities (Capabilities, CapabilitiesResponse (..))
+import Hasura.Backends.DataConnector.API.V0.ConfigSchema (ConfigSchemaResponse)
+import Hasura.Backends.DataConnector.Adapter.Types (DataConnectorName)
 import Hasura.Base.Error
 import Hasura.Base.ErrorValue qualified as ErrorValue
 import Hasura.Base.ToErrorValue
 import Hasura.EncJSON
 import Hasura.GraphQL.Schema.Options qualified as Options
-import Hasura.Incremental (Cacheable)
+import Hasura.Incremental (Cacheable (..))
 import Hasura.Prelude
 import Hasura.RQL.DDL.Headers ()
 import Language.GraphQL.Draft.Syntax qualified as G
@@ -208,9 +207,19 @@ instance FromJSON SourceName where
     "default" -> pure SNDefault
     t -> SNName <$> parseJSON (String t)
 
+instance HasCodec SourceName where
+  codec = dimapCodec dec enc nonEmptyTextCodec
+    where
+      dec t
+        | t == defaultSourceName = SNDefault
+        | otherwise = SNName t
+
+      enc SNDefault = defaultSourceName
+      enc (SNName t) = t
+
 sourceNameToText :: SourceName -> Text
 sourceNameToText = \case
-  SNDefault -> "default"
+  SNDefault -> unNonEmptyText defaultSourceName
   SNName t -> unNonEmptyText t
 
 instance ToJSON SourceName where
@@ -234,6 +243,9 @@ instance Cacheable SourceName
 
 defaultSource :: SourceName
 defaultSource = SNDefault
+
+defaultSourceName :: NonEmptyText
+defaultSourceName = mkNonEmptyTextUnsafe "default"
 
 data InpValInfo = InpValInfo
   { _iviDesc :: Maybe G.Description,
@@ -260,40 +272,6 @@ data SQLGenCtx = SQLGenCtx
 
 successMsg :: EncJSON
 successMsg = encJFromBuilder "{\"message\":\"success\"}"
-
-newtype NonNegativeInt = NonNegativeInt {getNonNegativeInt :: Int}
-  deriving (Show, Eq, ToJSON, Generic, NFData, Cacheable, Num)
-
-mkNonNegativeInt :: Int -> Maybe NonNegativeInt
-mkNonNegativeInt x = case x >= 0 of
-  True -> Just $ NonNegativeInt x
-  False -> Nothing
-
-unsafeNonNegativeInt :: Int -> NonNegativeInt
-unsafeNonNegativeInt = NonNegativeInt
-
-instance FromJSON NonNegativeInt where
-  parseJSON = withScientific "NonNegativeInt" $ \t -> do
-    case t >= 0 of
-      True -> maybe (fail "integer passed is out of bounds") (pure . NonNegativeInt) $ toBoundedInteger t
-      False -> fail "negative value not allowed"
-
-newtype NonNegativeDiffTime = NonNegativeDiffTime {unNonNegativeDiffTime :: DiffTime}
-  deriving (Show, Eq, ToJSON, Generic, NFData, Cacheable, Num)
-
-unsafeNonNegativeDiffTime :: DiffTime -> NonNegativeDiffTime
-unsafeNonNegativeDiffTime = NonNegativeDiffTime
-
-mkNonNegativeDiffTime :: DiffTime -> Maybe NonNegativeDiffTime
-mkNonNegativeDiffTime x = case x >= 0 of
-  True -> Just $ NonNegativeDiffTime x
-  False -> Nothing
-
-instance FromJSON NonNegativeDiffTime where
-  parseJSON = withScientific "NonNegativeDiffTime" $ \t -> do
-    case t >= 0 of
-      True -> return $ NonNegativeDiffTime . realToFrac $ t
-      False -> fail "negative value not allowed"
 
 newtype ResolvedWebhook = ResolvedWebhook {unResolvedWebhook :: Text}
   deriving (Show, Eq, FromJSON, ToJSON, Hashable, ToTxt, Generic)
@@ -579,3 +557,22 @@ instance NFData ApolloFederationConfig
 
 isApolloFedV1enabled :: Maybe ApolloFederationConfig -> Bool
 isApolloFedV1enabled = isJust
+
+data CapabilitiesInfo = CapabiltiesInfo
+  { ciCapabilities :: Capabilities,
+    ciConfigSchemaResponse :: ConfigSchemaResponse
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance Cacheable CapabilitiesInfo where
+  unchanged = const (==)
+
+instance ToJSON CapabilitiesInfo
+
+mkCapabilitiesInfo :: CapabilitiesResponse -> CapabilitiesInfo
+mkCapabilitiesInfo CapabilitiesResponse {..} = CapabiltiesInfo crCapabilities crConfigSchemaResponse
+
+newtype DataConnectorCapabilities = DataConnectorCapabilities
+  { unDataConnectorCapabilities :: HashMap DataConnectorName CapabilitiesInfo
+  }
+  deriving newtype (ToJSON, Semigroup, Monoid, Eq, Cacheable)

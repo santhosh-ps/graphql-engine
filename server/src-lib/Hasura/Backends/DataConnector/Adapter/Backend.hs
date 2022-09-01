@@ -36,7 +36,7 @@ import Language.GraphQL.Draft.Syntax qualified as G
 type Unimplemented = ()
 
 instance Backend 'DataConnector where
-  type BackendConfig 'DataConnector = Adapter.DataConnectorBackendConfig
+  type BackendConfig 'DataConnector = InsOrdHashMap Adapter.DataConnectorName Adapter.DataConnectorOptions
   type SourceConfig 'DataConnector = Adapter.SourceConfig
   type SourceConnConfiguration 'DataConnector = Adapter.ConnSourceConfig
 
@@ -44,8 +44,8 @@ instance Backend 'DataConnector where
   type FunctionName 'DataConnector = IR.F.Name
   type RawFunctionInfo 'DataConnector = XDisable
   type FunctionArgument 'DataConnector = XDisable
-  type ConstraintName 'DataConnector = Unimplemented
-  type BasicOrderType 'DataConnector = IR.O.OrderType
+  type ConstraintName 'DataConnector = IR.T.ConstraintName
+  type BasicOrderType 'DataConnector = IR.O.OrderDirection
   type NullsOrderType 'DataConnector = Unimplemented
   type CountType 'DataConnector = IR.A.CountAggregate
   type Column 'DataConnector = IR.C.Name

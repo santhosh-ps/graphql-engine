@@ -1,6 +1,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Hasura.App
   ( ExitCode (DatabaseMigrationError, DowngradeProcessError, MetadataCleanError, MetadataExportError, SchemaCacheInitError),
@@ -107,6 +108,7 @@ import Hasura.RQL.Types.Common
 import Hasura.RQL.Types.Eventing.Backend
 import Hasura.RQL.Types.Metadata
 import Hasura.RQL.Types.Network
+import Hasura.RQL.Types.Numeric qualified as Numeric
 import Hasura.RQL.Types.SchemaCache
 import Hasura.RQL.Types.SchemaCache.Build
 import Hasura.RQL.Types.Source
@@ -356,13 +358,10 @@ initialiseServeCtx env GlobalCtx {..} so@ServeOptions {..} serverMetrics = do
                   }
               sourceConnInfo = PostgresSourceConnInfo dbUrlConf (Just connSettings) (Q.cpAllowPrepare soConnParams) soTxIso Nothing
            in PostgresConnConfiguration sourceConnInfo Nothing defaultPostgresExtensionsSchema
-      dangerouslyCollapseBooleans
-        | soDangerousBooleanCollapse = Options.DangerouslyCollapseBooleans
-        | otherwise = Options.Don'tDangerouslyCollapseBooleans
       optimizePermissionFilters
         | EFOptimizePermissionFilters `elem` soExperimentalFeatures = Options.OptimizePermissionFilters
         | otherwise = Options.Don'tOptimizePermissionFilters
-      sqlGenCtx = SQLGenCtx soStringifyNum dangerouslyCollapseBooleans optimizePermissionFilters
+      sqlGenCtx = SQLGenCtx soStringifyNum soDangerousBooleanCollapse optimizePermissionFilters
 
   let serverConfigCtx =
         ServerConfigCtx
@@ -395,9 +394,9 @@ initialiseServeCtx env GlobalCtx {..} so@ServeOptions {..} serverMetrics = do
   -- An interval of 0 indicates that no schema sync is required
   case soSchemaPollInterval of
     Skip -> unLogger logger $ mkGenericStrLog LevelInfo "schema-sync" "Schema sync disabled"
-    Interval i -> do
-      unLogger logger $ mkGenericStrLog LevelInfo "schema-sync" ("Schema sync enabled. Polling at " <> show i)
-      void $ startSchemaSyncListenerThread logger metadataDbPool instanceId i metaVersionRef
+    Interval interval -> do
+      unLogger logger $ mkGenericStrLog LevelInfo "schema-sync" ("Schema sync enabled. Polling at " <> show interval)
+      void $ startSchemaSyncListenerThread logger metadataDbPool instanceId interval metaVersionRef
 
   schemaCacheRef <- initialiseSchemaCacheRef serverMetrics rebuildableSchemaCache
 
@@ -583,7 +582,7 @@ runHGEServer setupHook env serveOptions serveCtx initTime postPollHook serverMet
   -- table when a tenant starts up in multitenant
   let warpSettings :: Warp.Settings
       warpSettings =
-        Warp.setPort (soPort serveOptions)
+        Warp.setPort (_getPort $ soPort serveOptions)
           . Warp.setHost (soHost serveOptions)
           . Warp.setGracefulShutdownTimeout (Just 30) -- 30s graceful shutdown
           . Warp.setInstallShutdownHandler shutdownHandler
@@ -669,14 +668,10 @@ mkHGEServer setupHook env ServeOptions {..} ServeCtx {..} initTime postPollHook 
   -- NOTE: be sure to compile WITHOUT code coverage, for this to work properly.
   liftIO disableAssertNF
 
-  let dangerouslyCollapseBooleans
-        | soDangerousBooleanCollapse = Options.DangerouslyCollapseBooleans
-        | otherwise = Options.Don'tDangerouslyCollapseBooleans
-
-      optimizePermissionFilters
+  let optimizePermissionFilters
         | EFOptimizePermissionFilters `elem` soExperimentalFeatures = Options.OptimizePermissionFilters
         | otherwise = Options.Don'tOptimizePermissionFilters
-      sqlGenCtx = SQLGenCtx soStringifyNum dangerouslyCollapseBooleans optimizePermissionFilters
+      sqlGenCtx = SQLGenCtx soStringifyNum soDangerousBooleanCollapse optimizePermissionFilters
       Loggers loggerCtx logger _ = _scLoggers
 
   authModeRes <-
@@ -916,20 +911,21 @@ mkHGEServer setupHook env ServeOptions {..} ServeCtx {..} initTime postPollHook 
             waitForProcessingAction l actionType processingEventsCountAction' shutdownAction (maxTimeout - (Seconds 5))
 
     startEventTriggerPollerThread logger lockedEventsCtx cacheRef = do
-      let fetchI = milliseconds soEventsFetchInterval
+      let maxEventThreads = Numeric.getPositiveInt soEventsHttpPoolSize
+          fetchInterval = milliseconds $ Numeric.getNonNegative soEventsFetchInterval
           allSources = HM.elems $ scSources $ lastBuiltSchemaCache _scSchemaCache
 
-      unless (getNonNegativeInt soEventsFetchBatchSize == 0 || soEventsFetchInterval == 0) $ do
+      unless (Numeric.getNonNegativeInt soEventsFetchBatchSize == 0 || fetchInterval == 0) $ do
         -- Don't start the events poller thread when fetchBatchSize or fetchInterval is 0
         -- prepare event triggers data
-        eventEngineCtx <- liftIO $ atomically $ initEventEngineCtx soEventsHttpPoolSize fetchI soEventsFetchBatchSize
+        eventEngineCtx <- liftIO $ atomically $ initEventEngineCtx maxEventThreads fetchInterval soEventsFetchBatchSize
         let eventsGracefulShutdownAction =
               waitForProcessingAction
                 logger
                 "event_triggers"
                 (length <$> readTVarIO (leEvents lockedEventsCtx))
                 (EventTriggerShutdownAction (shutdownEventTriggerEvents allSources logger lockedEventsCtx))
-                soGracefulShutdownTimeout
+                (Numeric.getNonNegative soGracefulShutdownTimeout)
         unLogger logger $ mkGenericStrLog LevelInfo "event_triggers" "starting workers"
         void $
           C.forkManagedTWithGracefulShutdown
@@ -943,13 +939,14 @@ mkHGEServer setupHook env ServeOptions {..} ServeCtx {..} initTime postPollHook 
               eventEngineCtx
               lockedEventsCtx
               serverMetrics
+              (pmEventTriggerMetrics prometheusMetrics)
               soEnableMaintenanceMode
 
     startAsyncActionsPollerThread logger lockedEventsCtx cacheRef actionSubState = do
       -- start a background thread to handle async actions
       case soAsyncActionsFetchInterval of
         Skip -> pure () -- Don't start the poller thread
-        Interval sleepTime -> do
+        Interval (Numeric.getNonNegative -> sleepTime) -> do
           let label = "asyncActionsProcessor"
               asyncActionGracefulShutdownAction =
                 ( liftWithStateless \lowerIO ->
@@ -958,7 +955,7 @@ mkHGEServer setupHook env ServeOptions {..} ServeCtx {..} initTime postPollHook 
                         "async_actions"
                         (length <$> readTVarIO (leActionEvents lockedEventsCtx))
                         (MetadataDBShutdownAction (hoist lowerIO (shutdownAsyncActions lockedEventsCtx)))
-                        soGracefulShutdownTimeout
+                        (Numeric.getNonNegative soGracefulShutdownTimeout)
                     )
                 )
 
@@ -994,7 +991,7 @@ mkHGEServer setupHook env ServeOptions {..} ServeCtx {..} initTime postPollHook 
                     "scheduled_events"
                     (getProcessingScheduledEventsCount lockedEventsCtx)
                     (MetadataDBShutdownAction (hoist lowerIO unlockAllLockedScheduledEvents))
-                    soGracefulShutdownTimeout
+                    (Numeric.getNonNegative soGracefulShutdownTimeout)
                 )
             )
 

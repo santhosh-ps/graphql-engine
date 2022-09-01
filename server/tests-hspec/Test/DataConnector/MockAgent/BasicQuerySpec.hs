@@ -27,12 +27,13 @@ import Test.Hspec (SpecWith, describe, it)
 spec :: SpecWith TestEnvironment
 spec =
   Fixture.runWithLocalTestEnvironment
-    ( [ (Fixture.fixture $ Fixture.Backend Fixture.DataConnector)
-          { Fixture.mkLocalTestEnvironment = DataConnector.mkLocalTestEnvironmentMock,
-            Fixture.setupTeardown = \(testEnv, mockEnv) ->
-              [DataConnector.setupMockAction sourceMetadata DataConnector.mockBackendConfig (testEnv, mockEnv)]
-          }
-      ]
+    ( NE.fromList
+        [ (Fixture.fixture $ Fixture.Backend Fixture.DataConnector)
+            { Fixture.mkLocalTestEnvironment = DataConnector.mkLocalTestEnvironmentMock,
+              Fixture.setupTeardown = \(testEnv, mockEnv) ->
+                [DataConnector.setupMockAction sourceMetadata DataConnector.mockBackendConfig (testEnv, mockEnv)]
+            }
+        ]
     )
     tests
 
@@ -133,7 +134,7 @@ tests opts = do
                                 _qAggregates = Nothing,
                                 _qLimit = Just 1,
                                 _qOffset = Nothing,
-                                _qWhere = Just (API.And []),
+                                _qWhere = Nothing,
                                 _qOrderBy = Nothing
                               }
                         }
@@ -195,8 +196,8 @@ tests opts = do
                                 _qAggregates = Nothing,
                                 _qLimit = Just 3,
                                 _qOffset = Nothing,
-                                _qWhere = Just (API.And []),
-                                _qOrderBy = Just (API.OrderBy (API.ColumnName "AlbumId") API.Ascending NE.:| [])
+                                _qWhere = Nothing,
+                                _qOrderBy = Just (API.OrderBy mempty (API.OrderByElement [] (API.OrderByColumn (API.ColumnName "AlbumId")) API.Ascending :| []))
                               }
                         }
                     )

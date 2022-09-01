@@ -12,6 +12,7 @@ import {
   GraphQLFieldCustomization,
   NamingConventionOptions,
 } from '../../../../metadata/types';
+import { isPostgresFlavour } from './utils';
 
 export const connectionTypes = {
   DATABASE_URL: 'DATABASE_URL',
@@ -84,6 +85,7 @@ type DefaultStateProps = {
     envVar?: string;
     dbName?: string;
   };
+  extensionsSchema?: string;
 };
 
 export const getDefaultState = (props?: DefaultStateProps): ConnectDBState => {
@@ -97,6 +99,9 @@ export const getDefaultState = (props?: DefaultStateProps): ConnectDBState => {
     envVarState: {
       envVar: props?.dbConnection.envVar || '',
     },
+    ...(props?.extensionsSchema && {
+      extensionsSchema: props?.extensionsSchema,
+    }),
   };
 };
 
@@ -153,7 +158,7 @@ export const connectDataSource = (
       currentState.dbType
     )
   ) {
-    if (currentState.dbType === 'postgres' || currentState.dbType === 'citus') {
+    if (isPostgresFlavour(currentState.dbType)) {
       connectionParams = currentState.connectionParamState;
     }
     databaseURL = makeConnectionStringFromConnectionParams({

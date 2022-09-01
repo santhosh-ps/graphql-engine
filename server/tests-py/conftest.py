@@ -1,12 +1,13 @@
-import pytest
-import time
-from context import HGECtx, HGECtxError, ActionsWebhookServer, EvtsWebhookServer, HGECtxGQLServer, GQLWsClient, PytestConf, GraphQLWSClient
-import threading
-import random
-from datetime import datetime
-import sys
+import collections
 import os
-from collections import OrderedDict
+import pytest
+import re
+import sqlalchemy
+import sys
+import threading
+import time
+
+from context import HGECtx, HGECtxError, ActionsWebhookServer, EvtsWebhookServer, HGECtxGQLServer, GQLWsClient, PytestConf, GraphQLWSClient
 
 def pytest_addoption(parser):
     parser.addoption(
@@ -253,17 +254,13 @@ def pytest_configure(config):
             assert xdist_threads <= len(config.hge_url_list), "Not enough hge_urls specified, Required " + str(xdist_threads) + ", got " + str(len(config.hge_url_list))
             assert xdist_threads <= len(config.pg_url_list), "Not enough pg_urls specified, Required " + str(xdist_threads) + ", got " + str(len(config.pg_url_list))
 
-    random.seed(datetime.now())
-
-
 @pytest.hookimpl()
 def pytest_report_collectionfinish(config, startdir, items):
     """
     Collect server upgrade tests to the given file
     """
     tests_file = config.getoption('--collect-upgrade-tests-to-file')
-    sep=''
-    tests=OrderedDict()
+    tests = collections.OrderedDict()
     if tests_file:
         def is_upgrade_test(item):
             # Check if allow_server_upgrade_tests marker are present
@@ -292,8 +289,6 @@ def pytest_report_collectionfinish(config, startdir, items):
             for test in tests.keys():
                 f.write(test + '\n')
     return ''
-
-
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_configure_node(node):
@@ -332,7 +327,16 @@ def per_backend_test_class(request: pytest.FixtureRequest):
 def per_backend_test_function(request: pytest.FixtureRequest):
     return per_backend_tests_fixture(request)
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='class')
+def postgis(hge_ctx):
+    with sqlalchemy.create_engine(hge_ctx.pg_url).connect() as connection:
+        connection.execute('CREATE EXTENSION IF NOT EXISTS postgis')
+        connection.execute('CREATE EXTENSION IF NOT EXISTS postgis_topology')
+        postgis_version = connection.execute('SELECT PostGIS_lib_version() as postgis_version').fetchone()['postgis_version']
+        if re.match('^3\\.', postgis_version):
+            connection.execute('CREATE EXTENSION IF NOT EXISTS postgis_raster')
+
+@pytest.fixture(scope='class')
 def hge_ctx(request):
     config = request.config
     print("create hge_ctx")
@@ -369,7 +373,7 @@ def evts_webhook(request):
     webhook_httpd.server_close()
     web_server.join()
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='class')
 def actions_fixture(hge_ctx):
     if hge_ctx.is_default_backend:
         pg_version = hge_ctx.pg_version

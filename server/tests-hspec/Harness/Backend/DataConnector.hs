@@ -6,6 +6,7 @@ module Harness.Backend.DataConnector
     setupFixture,
     teardown,
     defaultBackendConfig,
+    chinookStockMetadata,
 
     -- * Mock Agent
     MockConfig (..),
@@ -32,9 +33,9 @@ import Data.Aeson qualified as Aeson
 import Data.IORef qualified as I
 import Harness.Backend.DataConnector.MockAgent
 import Harness.GraphqlEngine qualified as GraphqlEngine
-import Harness.Http (healthCheck)
+import Harness.Http (RequestHeaders, healthCheck)
 import Harness.Quoter.Yaml (yaml)
-import Harness.Test.Fixture (BackendType (DataConnector), Options, SetupAction (..), defaultBackendTypeString)
+import Harness.Test.Fixture (BackendType (DataConnector), Options, SetupAction (..), defaultBackendTypeString, defaultSource)
 import Harness.TestEnvironment (TestEnvironment)
 import Harness.Yaml (shouldReturnYaml)
 import Hasura.Backends.DataConnector.API qualified as API
@@ -81,6 +82,73 @@ setupFixture sourceMetadata backendConfig (testEnvironment, _) = do
 teardown :: (TestEnvironment, ()) -> IO ()
 teardown (testEnvironment, _) = do
   GraphqlEngine.clearMetadata testEnvironment
+
+chinookStockMetadata :: Aeson.Value
+chinookStockMetadata =
+  let source = defaultSource DataConnector
+      backendType = defaultBackendTypeString DataConnector
+   in [yaml|
+name : *source
+kind: *backendType
+tables:
+  - table: [Album]
+    configuration:
+      custom_root_fields:
+        select: albums
+        select_by_pk: albums_by_pk
+      column_config:
+        AlbumId:
+          custom_name: id
+        Title:
+          custom_name: title
+        ArtistId:
+          custom_name: artist_id
+    object_relationships:
+      - name: artist
+        using:
+          manual_configuration:
+            remote_table: [Artist]
+            column_mapping:
+              ArtistId: ArtistId
+  - table: [Artist]
+    configuration:
+      custom_root_fields:
+        select: artists
+        select_by_pk: artists_by_pk
+      column_config:
+        ArtistId:
+          custom_name: id
+        Name:
+          custom_name: name
+    array_relationships:
+      - name: albums
+        using:
+          manual_configuration:
+            remote_table: [Album]
+            column_mapping:
+              ArtistId: ArtistId
+  - table: Playlist
+    array_relationships:
+    - name : Tracks
+      using:
+        foreign_key_constraint_on:
+          column: PlaylistId
+          table:
+          - PlaylistTrack
+  - table: PlaylistTrack
+    object_relationships:
+      - name: Playlist
+        using:
+          foreign_key_constraint_on: PlaylistId
+      - name: Track
+        using:
+          manual_configuration:
+            remote_table: [Track]
+            column_mapping:
+              TrackId: TrackId
+  - table: Track
+configuration: {}
+|]
 
 --------------------------------------------------------------------------------
 -- Mock Agent
@@ -157,6 +225,8 @@ data TestCase = TestCase
     _given :: MockConfig,
     -- | The Graphql Query to test
     _whenRequest :: Aeson.Value,
+    -- | The headers to use on the Graphql Query request
+    _whenRequestHeaders :: RequestHeaders,
     -- | The expected HGE 'API.Query' value to be provided to the
     -- agent. A @Nothing@ value indicates that the 'API.Query'
     -- assertion should be skipped.
@@ -181,6 +251,7 @@ defaultTestCase TestCaseRequired {..} =
   TestCase
     { _given = _givenRequired,
       _whenRequest = _whenRequestRequired,
+      _whenRequestHeaders = [],
       _whenQuery = Nothing,
       _whenConfig = Nothing,
       _then = _thenRequired
@@ -197,8 +268,9 @@ runMockedTest opts TestCase {..} (testEnvironment, MockAgentEnvironment {..}) = 
   -- Execute the GQL Query and assert on the result
   shouldReturnYaml
     opts
-    ( GraphqlEngine.postGraphql
+    ( GraphqlEngine.postGraphqlWithHeaders
         testEnvironment
+        _whenRequestHeaders
         _whenRequest
     )
     _then

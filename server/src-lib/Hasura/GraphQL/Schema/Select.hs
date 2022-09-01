@@ -149,7 +149,8 @@ defaultSelectTable sourceInfo tableInfo fieldName description = runMaybeT do
 selectTableConnection ::
   forall b r m n.
   ( MonadBuildSchema b r m n,
-    BackendTableSelectSchema b
+    BackendTableSelectSchema b,
+    AggregationPredicatesSchema b
   ) =>
   SourceInfo b ->
   -- | table info
@@ -368,10 +369,10 @@ cause errors on the client side, for the following reasons:
 -- > }
 defaultTableSelectionSet ::
   forall b r m n.
-  ( MonadBuildSchema b r m n,
+  ( AggregationPredicatesSchema b,
     BackendTableSelectSchema b,
-    Eq (BooleanOperators b (IR.UnpreparedValue b)),
-    Eq (FunctionArgumentExp b (IR.UnpreparedValue b))
+    Eq (AnnBoolExp b (IR.UnpreparedValue b)),
+    MonadBuildSchema b r m n
   ) =>
   SourceInfo b ->
   TableInfo b ->
@@ -583,7 +584,7 @@ tableConnectionSelectionSet sourceInfo tableInfo = runMaybeT do
 -- > where: table_bool_exp
 defaultTableArgs ::
   forall b r m n.
-  MonadBuildSchema b r m n =>
+  (MonadBuildSchema b r m n, AggregationPredicatesSchema b) =>
   SourceInfo b ->
   TableInfo b ->
   m (InputFieldsParser n (SelectArgs b))
@@ -631,7 +632,9 @@ defaultTableArgs sourceInfo tableInfo = do
 -- > where: table_bool_exp
 tableWhereArg ::
   forall b r m n.
-  MonadBuildSchema b r m n =>
+  ( AggregationPredicatesSchema b,
+    MonadBuildSchema b r m n
+  ) =>
   SourceInfo b ->
   TableInfo b ->
   m (InputFieldsParser n (Maybe (IR.AnnBoolExp b (IR.UnpreparedValue b))))
@@ -724,7 +727,7 @@ tableOffsetArg =
 -- > after: String
 tableConnectionArgs ::
   forall b r m n.
-  MonadBuildSchema b r m n =>
+  (MonadBuildSchema b r m n, AggregationPredicatesSchema b) =>
   PrimaryKeyColumns b ->
   SourceInfo b ->
   TableInfo b ->
@@ -972,10 +975,10 @@ tableAggregationFields sourceInfo tableInfo =
 -- > field_name(arg_name: arg_type, ...): field_type
 fieldSelection ::
   forall b r m n.
-  ( MonadBuildSchema b r m n,
+  ( AggregationPredicatesSchema b,
     BackendTableSelectSchema b,
-    Eq (BooleanOperators b (IR.UnpreparedValue b)),
-    Eq (FunctionArgumentExp b (IR.UnpreparedValue b))
+    Eq (AnnBoolExp b (IR.UnpreparedValue b)),
+    MonadBuildSchema b r m n
   ) =>
   SourceInfo b ->
   TableName b ->
@@ -1126,10 +1129,10 @@ join) satisfies `p(T)`.
 -- | Field parsers for a table relationship
 relationshipField ::
   forall b r m n.
-  ( MonadBuildSchema b r m n,
+  ( AggregationPredicatesSchema b,
     BackendTableSelectSchema b,
-    Eq (BooleanOperators b (IR.UnpreparedValue b)),
-    Eq (FunctionArgumentExp b (IR.UnpreparedValue b))
+    Eq (AnnBoolExp b (IR.UnpreparedValue b)),
+    MonadBuildSchema b r m n
   ) =>
   SourceInfo b ->
   TableName b ->

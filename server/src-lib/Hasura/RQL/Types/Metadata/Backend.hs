@@ -30,8 +30,10 @@ import Network.HTTP.Client qualified as HTTP
 
 class
   ( Backend b,
+    Eq (AggregationPredicates b (PartialSQLExp b)),
     Eq (BooleanOperators b (PartialSQLExp b)),
     Eq (FunctionArgumentExp b (PartialSQLExp b)),
+    Hashable (AggregationPredicates b (PartialSQLExp b)),
     Hashable (BooleanOperators b (PartialSQLExp b)),
     Hashable (FunctionArgumentExp b (PartialSQLExp b))
   ) =>
@@ -60,6 +62,7 @@ class
   -- creates a connection pool (and other related parameters) in the process
   resolveSourceConfig ::
     (MonadIO m, MonadResolveSource m) =>
+    DataConnectorCapabilities ->
     Logger Hasura ->
     SourceName ->
     SourceConnConfiguration b ->

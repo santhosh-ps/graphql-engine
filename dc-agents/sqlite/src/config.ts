@@ -1,5 +1,5 @@
 import { FastifyRequest } from "fastify"
-import { SchemaObject } from "openapi3-ts"
+import { ConfigSchemaResponse } from "./types"
 
 export type Config = {
   db: string,
@@ -7,15 +7,23 @@ export type Config = {
   meta: Boolean
 }
 
-export type ConfigSchemaResponse = {
-  configSchema: SchemaObject,
-  otherSchemas: { [schemaName: string]: SchemaObject },
+export const getConfig = (request: FastifyRequest): Config => {
+  const config = tryGetConfig(request);
+  if (config === null) {
+    throw new Error("X-Hasura-DataConnector-Config header must specify db");
+  }
+  return config;
 }
 
-export const getConfig = (request: FastifyRequest): Config => {
+export const tryGetConfig = (request: FastifyRequest): Config | null => {
   const configHeader = request.headers["x-hasura-dataconnector-config"];
   const rawConfigJson = Array.isArray(configHeader) ? configHeader[0] : configHeader ?? "{}";
   const config = JSON.parse(rawConfigJson);
+
+  if(config.db == null) {
+    return null;
+  }
+
   return {
     db: config.db,
     tables: config.tables ?? null,
