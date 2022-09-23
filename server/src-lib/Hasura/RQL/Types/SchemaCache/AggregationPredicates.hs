@@ -24,7 +24,7 @@ defaultGetAggregationPredicateDeps ::
   (Backend b, GetAggregationPredicatesDeps b) =>
   AggregationPredicatesImplementation b (PartialSQLExp b) ->
   BoolExpM b [SchemaDependency]
-defaultGetAggregationPredicateDeps (AggregationPredicatesImplementation relInfo functions) = do
+defaultGetAggregationPredicateDeps (AggregationPredicatesImplementation relInfo _rowPermissions functions) = do
   BoolExpCtx {source, currTable} <- ask
   let relationshipName = riName relInfo
       relationshipTable = riRTable relInfo
@@ -35,7 +35,7 @@ defaultGetAggregationPredicateDeps (AggregationPredicatesImplementation relInfo 
                 SOITableObj @b currTable (TORel relationshipName)
           )
           DROnType
-   in (schemaDependency :) <$> local (\e -> e {currTable = relationshipTable}) (concat <$> traverse getFunctionDeps functions)
+   in (schemaDependency :) <$> local (\e -> e {currTable = relationshipTable}) (getFunctionDeps functions)
   where
     getFunctionDeps :: AggregationPredicate b (PartialSQLExp b) -> BoolExpM b [SchemaDependency]
     getFunctionDeps AggregationPredicate {..} =

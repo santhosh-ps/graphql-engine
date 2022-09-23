@@ -1,3 +1,4 @@
+import defaultState from '@/components/Services/Events/EventTriggers/state';
 import {
   ColumnConfig,
   CustomRootFields,
@@ -25,6 +26,7 @@ import { Nullable } from '../components/Common/utils/tsUtils';
 
 export const metadataQueryTypes = [
   'add_source',
+  'update_source',
   'drop_source',
   'reload_source',
   'track_table',
@@ -69,6 +71,7 @@ export const metadataQueryTypes = [
   'add_existing_table_or_view',
   'create_query_collection',
   'drop_query_collection',
+  'rename_query_collection',
   'add_query_to_collection',
   'drop_query_from_collection',
   'add_collection_to_allowlist',
@@ -522,6 +525,10 @@ export const generateCreateEventTriggerQuery = (
       enable_manual: state.operations.enable_manual,
       retry_conf: state.retryConf,
       headers: transformHeaders(state.headers),
+      cleanup_config: {
+        ...defaultState.cleanupConfig,
+        ...state.cleanupConfig,
+      },
       replace,
       request_transform: requestTransform,
     },
@@ -839,6 +846,7 @@ export const getEventInvocationsLogByID = (
   args: {
     type,
     event_id,
+    get_rows_count: false,
   },
 });
 
@@ -870,6 +878,7 @@ export const getEventInvocations = (
       ...query.args,
       limit,
       offset,
+      get_rows_count: false,
     },
   };
 };
@@ -917,6 +926,7 @@ export const getScheduledEvents = (
       ...query.args,
       limit,
       offset,
+      get_rows_count: false,
     },
   };
 };

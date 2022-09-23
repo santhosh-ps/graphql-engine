@@ -11,6 +11,7 @@ module Hasura.Incremental.Internal.Dependency
     recordAccess,
     selectD,
     selectKeyD,
+    selectMaybeD,
   )
 where
 
@@ -50,6 +51,7 @@ import Hasura.Incremental.Select
 import Hasura.Prelude
 import Language.GraphQL.Draft.Syntax qualified as G
 import Network.URI.Extended qualified as N
+import Refined (Refined, unrefine)
 import Servant.Client (BaseUrl, Scheme)
 import System.Cron.Types
 
@@ -77,6 +79,9 @@ selectD k (Dependency dk a) = Dependency (DependencyChild k dk) (select k a)
 -- | Selects a single key from a dependency containing a map-like data structure.
 selectKeyD :: (Select a, Selector a ~ ConstS k v) => k -> Dependency a -> Dependency v
 selectKeyD = selectD . ConstS
+
+selectMaybeD :: Monoid a => (Dependency (Maybe a)) -> Dependency a
+selectMaybeD = selectKeyD ()
 
 -- | Tracks whether a 'Dependency' is a “root” dependency created by 'newDependency' or a “child”
 -- dependency created from an existing dependency using 'selectD'.
@@ -122,6 +127,9 @@ class (Eq a) => Cacheable a where
 
 instance (Cacheable a) => Cacheable (NESeq a) where
   unchanged access = unchanged access `on` NESeq.toSeq
+
+instance (Cacheable a) => Cacheable (Refined p a) where
+  unchanged access = unchanged access `on` unrefine
 
 -- | A mapping from root 'Dependency' keys to the accesses made against those dependencies.
 newtype Accesses = Accesses {unAccesses :: DM.DMap UniqueS Access}

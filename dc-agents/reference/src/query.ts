@@ -1,8 +1,10 @@
-﻿import { QueryRequest, TableRelationships, Relationship, Query, Field, OrderBy, Expression, BinaryComparisonOperator, UnaryComparisonOperator, BinaryArrayComparisonOperator, ComparisonColumn, ComparisonValue, ScalarValue, Aggregate, SingleColumnAggregate, ColumnCountAggregate, TableName, OrderByElement, OrderByRelation } from "./types";
-import { coerceUndefinedToNull, crossProduct, tableNameEquals, unreachable, zip } from "./util";
+﻿import { QueryRequest, TableRelationships, Relationship, Query, Field, OrderBy, Expression, BinaryComparisonOperator, UnaryComparisonOperator, BinaryArrayComparisonOperator, ComparisonColumn, ComparisonValue, Aggregate, SingleColumnAggregate, ColumnCountAggregate, TableName, OrderByElement, OrderByRelation, ExistsInTable, ExistsExpression } from "@hasura/dc-api-types";
+import { coerceUndefinedToNull, filterIterable, mapIterable, reduceAndIterable, reduceOrIterable, skipIterable, tableNameEquals, takeIterable, unreachable } from "./util";
 import * as math from "mathjs";
 
 type RelationshipName = string
+
+type ScalarValue = (string | number | boolean | null)
 
 // This is a more constrained type for response rows that knows that the reference
 // agent never returns custom scalars that are JSON objects
@@ -23,7 +25,8 @@ const prettyPrintBinaryComparisonOperator = (operator: BinaryComparisonOperator)
     case "less_than": return "<";
     case "less_than_or_equal": return "<=";
     case "equal": return "==";
-    case "not_equal": return "!="; // Custom operator
+    case "same_day_as": return "same_day_as";
+    case "in_year": return "in_year";
     default: return unknownOperator(operator);
   };
 };
@@ -31,7 +34,6 @@ const prettyPrintBinaryComparisonOperator = (operator: BinaryComparisonOperator)
 const prettyPrintBinaryArrayComparisonOperator = (operator: BinaryArrayComparisonOperator): string => {
   switch (operator) {
     case "in": return "IN";
-    case "not_in": return "NOT IN"; // Custom operator
     default: return unknownOperator(operator);
   };
 };
@@ -39,10 +41,30 @@ const prettyPrintBinaryArrayComparisonOperator = (operator: BinaryArrayCompariso
 const prettyPrintUnaryComparisonOperator = (operator: UnaryComparisonOperator): string => {
   switch (operator) {
     case "is_null": return "IS NULL";
-    case "is_not_null": return "IS NOT NULL"; // Custom operator
     default: return unknownOperator(operator);
   };
 };
+
+const dateTimeSameDayAs = (a: ScalarValue, b: ScalarValue): boolean => {
+  if (typeof a !== "string")
+    return expectedString(typeof a);
+
+  if (typeof b !== "string")
+    return expectedString(typeof b);
+
+  return a.substring(0, 10) === b.substring(0, 10);
+}
+
+const dateTimeInYear = (a: ScalarValue, b: ScalarValue): boolean => {
+  if (typeof a !== "string")
+    return expectedString(typeof a);
+
+  if (typeof b !== "number")
+    return expectedNumber(typeof b);
+
+  const bString = b.toString();
+  return bString.length === 4 && a.startsWith(bString);
+}
 
 const getBinaryComparisonOperatorEvaluator = (operator: BinaryComparisonOperator): ((left: ScalarValue, right: ScalarValue) => boolean) => {
   switch (operator) {
@@ -51,7 +73,8 @@ const getBinaryComparisonOperatorEvaluator = (operator: BinaryComparisonOperator
     case "less_than": return (a, b) => a !== null && b !== null && a < b;
     case "less_than_or_equal": return (a, b) => a !== null && b !== null && a <= b;
     case "equal": return (a, b) => a !== null && b !== null && a === b;
-    case "not_equal": return (a, b) => a === null || b === null || a !== b; // Custom operator
+    case "same_day_as": return dateTimeSameDayAs;
+    case "in_year": return dateTimeInYear;
     default: return unknownOperator(operator);
   };
 };
@@ -59,7 +82,6 @@ const getBinaryComparisonOperatorEvaluator = (operator: BinaryComparisonOperator
 const getBinaryArrayComparisonOperatorEvaluator = (operator: BinaryArrayComparisonOperator): ((left: ScalarValue, right: ScalarValue[]) => boolean) => {
   switch (operator) {
     case "in": return (a, bs) => a !== null && bs.includes(a);
-    case "not_in": return (a, bs) => a === null || !bs.includes(a); // Custom operator
     default: return unknownOperator(operator);
   };
 };
@@ -68,13 +90,12 @@ const getBinaryArrayComparisonOperatorEvaluator = (operator: BinaryArrayComparis
 const getUnaryComparisonOperatorEvaluator = (operator: UnaryComparisonOperator): ((value: ScalarValue) => boolean) => {
   switch (operator) {
     case "is_null": return (v) => v === null;
-    case "is_not_null": return (v) => v !== null; // Custom operator
     default: return unknownOperator(operator);
   };
 };
 
 const prettyPrintComparisonColumn = (comparisonColumn: ComparisonColumn): string => {
-  return comparisonColumn.path.concat(comparisonColumn.name).map(p => `[${p}]`).join(".");
+  return (comparisonColumn.path ?? []).concat(comparisonColumn.name).map(p => `[${p}]`).join(".");
 }
 
 const prettyPrintComparisonValue = (comparisonValue: ComparisonValue): string => {
@@ -86,7 +107,20 @@ const prettyPrintComparisonValue = (comparisonValue: ComparisonValue): string =>
     default:
       return unreachable(comparisonValue["type"]);
   }
-}
+};
+
+const prettyPrintTableName = (tableName: TableName): string => {
+  return tableName.map(t => `[${t}]`).join(".");
+};
+
+const prettyPrintExistsInTable = (existsInTable: ExistsInTable): string => {
+  switch (existsInTable.type) {
+    case "related":
+      return `RELATED TABLE VIA [${existsInTable.relationship}]`;
+    case "unrelated":
+      return `UNRELATED TABLE ${prettyPrintTableName(existsInTable.table)}`;
+  }
+};
 
 export const prettyPrintExpression = (e: Expression): string => {
   switch (e.type) {
@@ -100,32 +134,31 @@ export const prettyPrintExpression = (e: Expression): string => {
         : "false";
     case "not":
       return `!(${prettyPrintExpression(e.expression)})`;
+    case "exists":
+      return `(EXISTS IN ${prettyPrintExistsInTable(e.in_table)} WHERE (${prettyPrintExpression(e.where)}))`
     case "binary_op":
-      return `([${prettyPrintComparisonColumn(e.column)}] ${prettyPrintBinaryComparisonOperator(e.operator)} ${prettyPrintComparisonValue(e.value)})`;
+      return `(${prettyPrintComparisonColumn(e.column)} ${prettyPrintBinaryComparisonOperator(e.operator)} ${prettyPrintComparisonValue(e.value)})`;
     case "binary_arr_op":
-      return `([${prettyPrintComparisonColumn(e.column)}] ${prettyPrintBinaryArrayComparisonOperator(e.operator)} (${e.values.join(", ")}))`;
+      return `(${prettyPrintComparisonColumn(e.column)} ${prettyPrintBinaryArrayComparisonOperator(e.operator)} (${e.values.join(", ")}))`;
     case "unary_op":
-      return `([${prettyPrintComparisonColumn(e.column)}] ${prettyPrintUnaryComparisonOperator(e.operator)})`;
+      return `(${prettyPrintComparisonColumn(e.column)} ${prettyPrintUnaryComparisonOperator(e.operator)})`;
     default:
       return unreachable(e["type"]);
   }
 };
 
-const areComparingColumnsOnSameTable = (comparisonColumn: ComparisonColumn, comparisonValue: ComparisonValue): boolean => {
-  if (comparisonValue.type === "scalar")
-    return false;
-  if (comparisonColumn.path.length !== comparisonValue.column.path.length)
-    return false;
-  return zip(comparisonColumn.path, comparisonValue.column.path).every(([p1, p2]) => p1 === p2);
-};
+const makeFilterPredicate = (
+    expression: Expression | null,
+    getComparisonColumnValue: (comparisonColumn: ComparisonColumn, row: Record<string, ScalarValue>) => ScalarValue,
+    performExistsSubquery: (exists: ExistsExpression, row: Record<string, ScalarValue>) => boolean
+  ) => (row: Record<string, ScalarValue>) => {
 
-const makeFilterPredicate = (expression: Expression | null, getComparisonColumnValues: (comparisonColumn: ComparisonColumn, row: Record<string, ScalarValue>) => ScalarValue[]) => (row: Record<string, ScalarValue>) => {
-  const extractComparisonValueScalars = (comparisonValue: ComparisonValue): ScalarValue[] => {
+  const extractComparisonValueScalar = (comparisonValue: ComparisonValue): ScalarValue => {
     switch (comparisonValue.type) {
       case "column":
-        return getComparisonColumnValues(comparisonValue.column, row);
+        return getComparisonColumnValue(comparisonValue.column, row);
       case "scalar":
-        return [comparisonValue.value];
+        return comparisonValue.value;
       default:
         return unreachable(comparisonValue["type"]);
     }
@@ -134,31 +167,67 @@ const makeFilterPredicate = (expression: Expression | null, getComparisonColumnV
   const evaluate = (e: Expression): boolean => {
     switch (e.type) {
       case "and":
-        return e.expressions.map(evaluate).reduce((b1, b2) => b1 && b2, true);
+        return reduceAndIterable(mapIterable(e.expressions, evaluate));
       case "or":
-        return e.expressions.map(evaluate).reduce((b1, b2) => b1 || b2, false);
+        return reduceOrIterable(mapIterable(e.expressions, evaluate));
       case "not":
         return !evaluate(e.expression);
+      case "exists":
+        return performExistsSubquery(e, row);
       case "binary_op":
-        const binOpColumnVals = getComparisonColumnValues(e.column, row);
-        const binOpComparisonVals = extractComparisonValueScalars(e.value);
-        const comparisonPairs =
-          areComparingColumnsOnSameTable(e.column, e.value)
-            ? zip(binOpColumnVals, binOpComparisonVals)
-            : crossProduct(binOpColumnVals, binOpComparisonVals);
-        return comparisonPairs.some(([columnVal, comparisonVal]) => getBinaryComparisonOperatorEvaluator(e.operator)(columnVal, comparisonVal));
+        const binOpColumnVal = getComparisonColumnValue(e.column, row);
+        const binOpComparisonVal = extractComparisonValueScalar(e.value);
+        return getBinaryComparisonOperatorEvaluator(e.operator)(binOpColumnVal, binOpComparisonVal);
       case "binary_arr_op":
-        const inColumnVals = getComparisonColumnValues(e.column, row);
-        return inColumnVals.some(columnVal => getBinaryArrayComparisonOperatorEvaluator(e.operator)(columnVal, e.values));
+        const inColumnVal = getComparisonColumnValue(e.column, row);
+        return getBinaryArrayComparisonOperatorEvaluator(e.operator)(inColumnVal, e.values);
       case "unary_op":
-        const unOpColumnVals = getComparisonColumnValues(e.column, row);
-        return unOpColumnVals.some(columnVal => getUnaryComparisonOperatorEvaluator(e.operator)(columnVal));
+        const unOpColumnVal = getComparisonColumnValue(e.column, row);
+        return getUnaryComparisonOperatorEvaluator(e.operator)(unOpColumnVal);
       default:
         return unreachable(e["type"]);
     }
   }
   return expression ? evaluate(expression) : true;
 };
+
+const makePerformExistsSubquery = (
+    findRelationship: (relationshipName: RelationshipName) => Relationship,
+    performSubquery: (sourceRow: Record<string, ScalarValue>, tableName: TableName, query: Query) => QueryResponse
+  ) => (
+    exists: ExistsExpression,
+    row: Record<string, ScalarValue>
+  ): boolean => {
+
+  const [targetTable, joinExpression] = (() => {
+    switch (exists.in_table.type) {
+      case "related":
+        const relationship = findRelationship(exists.in_table.relationship);
+        const joinExpression = createFilterExpressionForRelationshipJoin(row, relationship);
+        return [relationship.target_table, joinExpression];
+      case "unrelated":
+        return [exists.in_table.table, undefined];
+      default:
+        return unreachable(exists.in_table["type"]);
+    }
+  })();
+
+  if (joinExpression === null)
+    return false;
+
+  const subquery: Query = {
+    aggregates: {
+      count: { type: "star_count" }
+    },
+    limit: 1, // We only need one row to exist to satisfy this expresion, this short circuits some filtering
+    where: joinExpression !== undefined
+      ? { type: "and", expressions: [joinExpression, exists.where] } // Important: the join expression goes first to ensure short circuiting prevents unnecessary subqueries
+      : exists.where
+  };
+
+  const results = performSubquery(row, targetTable, subquery);
+  return (results.aggregates?.count ?? 0) > 0;
+}
 
 const buildQueryForPathedOrderByElement = (orderByElement: OrderByElement, orderByRelations: Record<RelationshipName, OrderByRelation>): Query => {
   const [relationshipName, ...remainingPath] = orderByElement.target_path;
@@ -296,10 +365,9 @@ const sortRows = (rows: Record<string, ScalarValue>[], orderBy: OrderBy, getOrde
     })
     .map(([row, _valueCache]) => row);
 
-const paginateRows = (rows: Record<string, ScalarValue>[], offset: number | null, limit: number | null): Record<string, ScalarValue>[] => {
-  const start = offset ?? 0;
-  const end = limit ? start + limit : rows.length;
-  return rows.slice(start, end);
+const paginateRows = (rows: Iterable<Record<string, ScalarValue>>, offset: number | null, limit: number | null): Iterable<Record<string, ScalarValue>> => {
+  const skipped = offset !== null ? skipIterable(rows, offset) : rows;
+  return limit !== null ? takeIterable(skipped, limit) : skipped;
 };
 
 const makeFindRelationship = (allTableRelationships: TableRelationships[], tableName: TableName) => (relationshipName: RelationshipName): Relationship => {
@@ -347,60 +415,23 @@ const addRelationshipFilterToQuery = (row: Record<string, ScalarValue>, relation
     const existingFilters = subquery.where ? [subquery.where] : []
     return {
       ...subquery,
+      limit: relationship.relationship_type === "object" ? 1 : subquery.limit, // If it's an object relationship, we expect only one result to come back, so we can optimise the query by limiting the filtering stop after one row
       where: { type: "and", expressions: [filterExpression, ...existingFilters] }
     };
   }
 };
 
-const buildFieldsForPathedComparisonColumn = (comparisonColumn: ComparisonColumn): Record<string, Field> => {
-  const [relationshipName, ...remainingPath] = comparisonColumn.path;
-  if (relationshipName === undefined) {
-    return {
-      [comparisonColumn.name]: { type: "column", column: comparisonColumn.name }
-    };
+const makeGetComparisonColumnValue = (parentQueryRowChain: Record<string, ScalarValue>[]) => (comparisonColumn: ComparisonColumn, row: Record<string, ScalarValue>): ScalarValue => {
+  const path = comparisonColumn.path ?? [];
+  if (path.length === 0) {
+    return coerceUndefinedToNull(row[comparisonColumn.name]);
+  } else if (path.length === 1 && path[0] === "$") {
+    const queryRow = parentQueryRowChain.length === 0
+      ? row
+      : parentQueryRowChain[0];
+    return coerceUndefinedToNull(queryRow[comparisonColumn.name]);
   } else {
-    const innerComparisonColumn = { ...comparisonColumn, path: remainingPath };
-    return {
-      [relationshipName]: { type: "relationship", relationship: relationshipName, query: { fields: buildFieldsForPathedComparisonColumn(innerComparisonColumn) } }
-    };
-  }
-};
-
-const extractScalarValuesFromFieldPath = (fieldPath: string[], row: ProjectedRow): ScalarValue[] => {
-  const [fieldName, ...remainingPath] = fieldPath;
-  const fieldValue = row[fieldName];
-
-  if (remainingPath.length === 0) {
-    if (fieldValue === null || typeof fieldValue !== "object") {
-      return [fieldValue];
-    } else {
-      throw new Error("Field path did not end in a column field value");
-    }
-  } else {
-    if (fieldValue !== null && typeof fieldValue === "object") {
-      return (fieldValue.rows ?? []).flatMap(row => extractScalarValuesFromFieldPath(remainingPath, row));
-    } else {
-      throw new Error(`Found a column field value in the middle of a field path: ${fieldPath}`);
-    }
-  }
-};
-
-const makeGetComparisonColumnValues = (findRelationship: (relationshipName: RelationshipName) => Relationship, performQuery: (tableName: TableName, query: Query) => QueryResponse) => (comparisonColumn: ComparisonColumn, row: Record<string, ScalarValue>): ScalarValue[] => {
-  const [relationshipName, ...remainingPath] = comparisonColumn.path;
-  if (relationshipName === undefined) {
-    return [coerceUndefinedToNull(row[comparisonColumn.name])];
-  } else {
-    const relationship = findRelationship(relationshipName);
-    const query: Query = { fields: buildFieldsForPathedComparisonColumn({ ...comparisonColumn, path: remainingPath }) };
-    const subquery = addRelationshipFilterToQuery(row, relationship, query);
-
-    if (subquery === null) {
-      return [];
-    } else {
-      const rows = performQuery(relationship.target_table, subquery).rows ?? [];
-      const fieldPath = remainingPath.concat(comparisonColumn.name);
-      return rows.flatMap(row => extractScalarValuesFromFieldPath(fieldPath, row));
-    }
+    throw new Error(`Unsupported path on ComparisonColumn: ${prettyPrintComparisonColumn(comparisonColumn)}`);
   }
 };
 
@@ -494,20 +525,24 @@ const calculateAggregates = (rows: Record<string, ScalarValue>[], aggregateReque
 };
 
 export const queryData = (getTable: (tableName: TableName) => Record<string, ScalarValue>[] | undefined, queryRequest: QueryRequest) => {
-  const performQuery = (tableName: TableName, query: Query): QueryResponse => {
+  const performQuery = (parentQueryRowChain: Record<string, ScalarValue>[], tableName: TableName, query: Query): QueryResponse => {
     const rows = getTable(tableName);
     if (rows === undefined) {
       throw `${tableName} is not a valid table`;
     }
+    const performSubquery = (sourceRow: Record<string, ScalarValue>, tableName: TableName, query: Query): QueryResponse => {
+      return performQuery([...parentQueryRowChain, sourceRow], tableName, query);
+    };
     const findRelationship = makeFindRelationship(queryRequest.table_relationships, tableName);
-    const getComparisonColumnValues = makeGetComparisonColumnValues(findRelationship, performQuery);
-    const getOrderByElementValue = makeGetOrderByElementValue(findRelationship, performQuery);
+    const getComparisonColumnValue = makeGetComparisonColumnValue(parentQueryRowChain);
+    const performExistsSubquery = makePerformExistsSubquery(findRelationship, performSubquery);
+    const getOrderByElementValue = makeGetOrderByElementValue(findRelationship, performNewQuery);
 
-    const filteredRows = rows.filter(makeFilterPredicate(query.where ?? null, getComparisonColumnValues));
-    const sortedRows = query.order_by ? sortRows(filteredRows, query.order_by, getOrderByElementValue) : filteredRows;
-    const paginatedRows = paginateRows(sortedRows, query.offset ?? null, query.limit ?? null);
+    const filteredRows = filterIterable(rows, makeFilterPredicate(query.where ?? null, getComparisonColumnValue, performExistsSubquery));
+    const sortedRows = query.order_by ? sortRows(Array.from(filteredRows), query.order_by, getOrderByElementValue) : filteredRows;
+    const paginatedRows = Array.from(paginateRows(sortedRows, query.offset ?? null, query.limit ?? null));
     const projectedRows = query.fields
-      ? paginatedRows.map(projectRow(query.fields, findRelationship, performQuery))
+      ? paginatedRows.map(projectRow(query.fields, findRelationship, performNewQuery))
       : null;
     const calculatedAggregates = query.aggregates
       ? calculateAggregates(paginatedRows, query.aggregates)
@@ -517,8 +552,13 @@ export const queryData = (getTable: (tableName: TableName) => Record<string, Sca
       rows: projectedRows,
     }
   }
+  const performNewQuery = (tableName: TableName, query: Query): QueryResponse => performQuery([], tableName, query);
 
-  return performQuery(queryRequest.table, queryRequest.query);
+  return performNewQuery(queryRequest.table, queryRequest.query);
 };
 
 const unknownOperator = (x: string): never => { throw new Error(`Unknown operator: ${x}`) };
+
+const expectedString = (x: string): never => { throw new Error(`Expected string value but got ${x}`) };
+
+const expectedNumber = (x: string): never => { throw new Error(`Expected number value but got ${x}`) };

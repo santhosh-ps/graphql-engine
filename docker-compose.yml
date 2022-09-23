@@ -44,7 +44,10 @@ services:
       - mariadb-data:/var/lib/mysql
 
   postgres:
-    image: cimg/postgres:14.4-postgis@sha256:492a389895568e2f89a03c0c45c19350888611001123514623551a014e83a625
+    image: postgres:15beta4
+    command:
+      - -F # turn fsync off for speed
+      - -N 1000 # increase max connections from 100 so we can run more HGEs
     ports:
       - "65002:5432"
     environment:
@@ -52,11 +55,11 @@ services:
       POSTGRES_PASSWORD: "hasura"
       POSTGRES_DB: "hasura"
     volumes:
-        - postgres-data:/var/lib/postgresql/data
-        - ./docker-compose/postgres/init.sh:/docker-entrypoint-initdb.d/init-hasura.sh:ro
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker-compose/postgres/init.sh:/docker-entrypoint-initdb.d/init-hasura.sh:ro
 
   sqlserver:
-    build: ./docker-compose/sqlserver/
+    image: ${MSSQL_IMAGE:-mcr.microsoft.com/mssql/server:2019-latest@sha256:a098c9ff6fbb8e1c9608ad7511fa42dba8d22e0d50b48302761717840ccc26af}
     ports:
       - "65003:1433"
     environment:
@@ -65,6 +68,18 @@ services:
       MSSQL_SA_PASSWORD: "DockerComposePassword!"
     volumes:
       - mssql-data:/var/opt/mssql
+
+  # Separated from the `sqlserver` container so we can use the `mssql-tools` image to run `sqlcmd`.
+  # `sqlcmd` is not available in the `azure-sql-edge` image on arm64, which we use for testing on macOS.
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql-tools
+    command:
+      - /init.sh
+    environment:
+      SERVER_HOST: sqlserver
+    volumes:
+      - ./docker-compose/sqlserver-init/init.sh:/init.sh
+      - ./docker-compose/sqlserver-init/init.sql:/init.sql
 
   citus:
     image: citusdata/citus:10.1@sha256:7e497e5ca18d7f2ae2a66c1d5d676b548e9221b7e6294adfb03006adad85502c
@@ -79,7 +94,7 @@ services:
       - ./docker-compose/postgres/init.sh:/docker-entrypoint-initdb.d/init-hasura.sh:ro
 
   cockroach:
-    image: cockroachdb/cockroach:v22.1.5@sha256:66ee50d6fdc92a6994d79a74eb689b6fd2a931c4c72ac98b4cb7dba4c6ce3f8f
+    image: us-docker.pkg.dev/cockroach-cloud-images/cockroachdb/cockroach:v22.1.7-28-g19985f9b60
     command:
       - start-single-node
       - --insecure
@@ -90,20 +105,28 @@ services:
       COCKROACH_USER: "root"
       COCKROACH_DATABASE: "hasura"
     volumes:
-        - cockroach-data:/cockroach/cockroach-data
-        - ./docker-compose/cockroach/init.sh:/docker-entrypoint-initdb.d/init-hasura.sh:ro
+      - cockroach-data:/cockroach/cockroach-data
+      - ./docker-compose/cockroach/init.sh:/docker-entrypoint-initdb.d/init-hasura.sh:ro
 
   dc-reference-agent:
-    build: ./dc-agents/reference/
+    build:
+      context: ./dc-agents
+      dockerfile: ./Dockerfile-reference
     ports:
       - "65005:8100"
 
   dc-sqlite-agent:
-    build: ./dc-agents/sqlite/
+    build:
+      context: ./dc-agents
+      dockerfile: ./Dockerfile-sqlite
     ports:
       - "65007:8100"
     volumes:
       - "./dc-agents/sqlite/test/db.chinook.sqlite:/db.chinook.sqlite"
+    environment:
+      METRICS: y
+      PRETTY_PRINT_LOGS: y
+      LOG_LEVEL: debug
 
 volumes:
   citus-data:

@@ -15,6 +15,8 @@ MSSQL_DBPASSWORD = Hasura1!
 CITUS_PORT = 65004
 DC_REFERENCE_PORT = 65005
 DC_REFERENCE_AGENT_URL = localhost:$(DC_REFERENCE_PORT)/health
+DC_SQLITE_PORT = 65007
+DC_SQLITE_AGENT_URL = localhost:$(DC_SQLITE_PORT)/health
 COCKROACH_PORT = 65008
 COCKROACH_DBNAME = hasura
 COCKROACH_DBUSER = root
@@ -25,19 +27,18 @@ COCKROACH_DBUSER = root
 # function from util.sh (or anywhere else).
 DB_UTILS = source ./.buildkite/scripts/util/util.sh;
 
-ifneq ($(shell command -v sqlcmd),)
-MSSQL_SQLCMD = sqlcmd
-MSSQL_SQLCMD_PORT = $(MSSQL_PORT)
+# Use the Azure SQL Edge image instead of the SQL Server image on arm64.
+# The latter doesn't work yet.
+ifeq ($(shell uname -m),arm64)
+MSSQL_IMAGE=mcr.microsoft.com/azure-sql-edge
 else
-ifneq ($(shell [[ -e /opt/mssql-tools/bin/sqlcmd ]] && echo true),)
-MSSQL_SQLCMD = /opt/mssql-tools/bin/sqlcmd
-MSSQL_SQLCMD_PORT = $(MSSQL_PORT)
-else
-MSSQL_SQLCMD = docker compose exec --no-TTY sqlserver sqlcmd
-MSSQL_SQLCMD_PORT = 1433
-endif
+MSSQL_IMAGE=  # allow the Docker Compose file to set the image
 endif
 
+# Run `sqlcmd` in a separate image when waiting for SQL Server to start.
+MSSQL_SQLCMD = docker run --rm --platform=linux/amd64 --net=host mcr.microsoft.com/mssql-tools /opt/mssql-tools/bin/sqlcmd
+
+export MSSQL_IMAGE
 export MSSQL_SQLCMD
 
 define stop_after
@@ -97,11 +98,12 @@ start-sqlserver: spawn-sqlserver wait-for-sqlserver
 .PHONY: spawn-sqlserver
 spawn-sqlserver:
 	docker compose up -d sqlserver
+	docker compose run sqlserver-init
 
 .PHONY: wait-for-sqlserver
 wait-for-sqlserver:
 	$(DB_UTILS) wait_for_mssql $(MSSQL_PORT)
-	$(DB_UTILS) wait_for_mssql_db $(MSSQL_SQLCMD_PORT) "$(MSSQL_DBNAME)" "$(MSSQL_DBUSER)" "$(MSSQL_DBPASSWORD)"
+	$(DB_UTILS) wait_for_mssql_db $(MSSQL_PORT) "$(MSSQL_DBNAME)" "$(MSSQL_DBUSER)" "$(MSSQL_DBPASSWORD)"
 
 .PHONY: start-mysql
 ## start-mysql: start local MariaDB in Docker and wait for it to be ready
@@ -124,15 +126,26 @@ spawn-dc-reference-agent:
 	docker compose up -d --build dc-reference-agent
 
 .PHONY: wait-for-dc-reference-agent
-## wait-for-dc-reference-agent: call health endpoint of DataConnector reference agent until it is ready
 wait-for-dc-reference-agent:
 	$(DB_UTILS) wait_for_http_success $(DC_REFERENCE_AGENT_URL) "dc-reference-agent"
 
+.PHONY: start-dc-sqlite-agent
+## start-dc-sqlite-agent: start the Data Connectors SQLite agent in Docker and wait for it to be ready
+start-dc-sqlite-agent: spawn-dc-sqlite-agent wait-for-dc-sqlite-agent
+
+.PHONY: spawn-dc-sqlite-agent
+spawn-dc-sqlite-agent:
+	docker compose up -d --build dc-sqlite-agent
+
+.PHONY: wait-for-dc-sqlite-agent
+wait-for-dc-sqlite-agent:
+	$(DB_UTILS) wait_for_http_success $(DC_SQLITE_AGENT_URL) "dc-sqlite-agent"
+
 .PHONY: start-backends
-## start-backends: start local PostgreSQL, MariaDB, and MS SQL Server in Docker and wait for them to be ready
+## start-backends: start all known backends in Docker and wait for them to be ready
 start-backends: \
-	spawn-postgres spawn-sqlserver spawn-mysql spawn-citus spawn-dc-reference-agent spawn-cockroach\
-	wait-for-postgres wait-for-sqlserver wait-for-mysql wait-for-citus wait-for-dc-reference-agent wait-for-cockroach
+	spawn-postgres spawn-sqlserver spawn-mysql spawn-citus spawn-dc-reference-agent spawn-dc-sqlite-agent spawn-cockroach \
+	wait-for-postgres wait-for-sqlserver wait-for-mysql wait-for-citus wait-for-dc-reference-agent wait-for-dc-sqlite-agent wait-for-cockroach
 
 .PHONY: stop-everything
 ## stop-everything: tear down test databases

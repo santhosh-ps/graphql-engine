@@ -40,9 +40,6 @@ module Hasura.RQL.Types.Common
     ApolloFederationConfig (..),
     ApolloFederationVersion (..),
     isApolloFedV1enabled,
-    CapabilitiesInfo (..),
-    mkCapabilitiesInfo,
-    DataConnectorCapabilities (..),
   )
 where
 
@@ -59,10 +56,7 @@ import Data.Text qualified as T
 import Data.Text.Extended
 import Data.Text.NonEmpty
 import Data.URL.Template
-import Database.PG.Query qualified as Q
-import Hasura.Backends.DataConnector.API.V0.Capabilities (Capabilities, CapabilitiesResponse (..))
-import Hasura.Backends.DataConnector.API.V0.ConfigSchema (ConfigSchemaResponse)
-import Hasura.Backends.DataConnector.Adapter.Types (DataConnectorName)
+import Database.PG.Query qualified as PG
 import Hasura.Base.Error
 import Hasura.Base.ErrorValue qualified as ErrorValue
 import Hasura.Base.ToErrorValue
@@ -86,8 +80,8 @@ newtype RelName = RelName {getRelTxt :: NonEmptyText}
       FromJSONKey,
       ToJSON,
       ToJSONKey,
-      Q.ToPrepArg,
-      Q.FromCol,
+      PG.ToPrepArg,
+      PG.FromCol,
       Generic,
       NFData,
       Cacheable
@@ -121,8 +115,8 @@ instance FromJSON RelType where
   parseJSON (String "array") = return ArrRel
   parseJSON _ = fail "expecting either 'object' or 'array' for rel_type"
 
-instance Q.FromCol RelType where
-  fromCol bs = flip Q.fromColHelper bs $
+instance PG.FromCol RelType where
+  fromCol bs = flip PG.fromColHelper bs $
     PD.enum $ \case
       "object" -> Just ObjRel
       "array" -> Just ArrRel
@@ -167,7 +161,7 @@ instance ToJSON InsertOrder where
 
 -- | Postgres OIDs. <https://www.postgresql.org/docs/12/datatype-oid.html>
 newtype OID = OID {unOID :: Int}
-  deriving (Show, Eq, NFData, Hashable, ToJSON, FromJSON, Q.FromCol, Cacheable)
+  deriving (Show, Eq, NFData, Hashable, ToJSON, FromJSON, PG.FromCol, Cacheable)
 
 newtype FieldName = FieldName {getFieldNameTxt :: Text}
   deriving
@@ -258,7 +252,7 @@ data InpValInfo = InpValInfo
 instance Cacheable InpValInfo
 
 newtype SystemDefined = SystemDefined {unSystemDefined :: Bool}
-  deriving (Show, Eq, FromJSON, ToJSON, Q.ToPrepArg, NFData, Cacheable)
+  deriving (Show, Eq, FromJSON, ToJSON, PG.ToPrepArg, NFData, Cacheable)
 
 isSystemDefined :: SystemDefined -> Bool
 isSystemDefined = unSystemDefined
@@ -298,9 +292,9 @@ instance FromJSON InputWebhook where
       Left e -> fail $ "Parsing URL template failed: " ++ e
       Right v -> pure $ InputWebhook v
 
-instance Q.FromCol InputWebhook where
+instance PG.FromCol InputWebhook where
   fromCol bs = do
-    urlTemplate <- parseURLTemplate <$> Q.fromCol bs
+    urlTemplate <- parseURLTemplate <$> PG.fromCol bs
     bimap (\e -> "Parsing URL template failed: " <> T.pack e) InputWebhook urlTemplate
 
 resolveWebhook :: QErrM m => Env.Environment -> InputWebhook -> m ResolvedWebhook
@@ -399,9 +393,9 @@ instance FromJSON UrlConf where
       Success a -> pure $ UrlValue a
   parseJSON _ = fail "one of string or object must be provided for url/webhook"
 
-getConnOptionsFromConnParams :: PGConnectionParams -> Q.ConnOptions
+getConnOptionsFromConnParams :: PGConnectionParams -> PG.ConnOptions
 getConnOptionsFromConnParams PGConnectionParams {..} =
-  Q.ConnOptions
+  PG.ConnOptions
     { connHost = T.unpack _pgcpHost,
       connUser = T.unpack _pgcpUsername,
       connPort = _pgcpPort,
@@ -557,22 +551,3 @@ instance NFData ApolloFederationConfig
 
 isApolloFedV1enabled :: Maybe ApolloFederationConfig -> Bool
 isApolloFedV1enabled = isJust
-
-data CapabilitiesInfo = CapabiltiesInfo
-  { ciCapabilities :: Capabilities,
-    ciConfigSchemaResponse :: ConfigSchemaResponse
-  }
-  deriving stock (Eq, Show, Generic)
-
-instance Cacheable CapabilitiesInfo where
-  unchanged = const (==)
-
-instance ToJSON CapabilitiesInfo
-
-mkCapabilitiesInfo :: CapabilitiesResponse -> CapabilitiesInfo
-mkCapabilitiesInfo CapabilitiesResponse {..} = CapabiltiesInfo crCapabilities crConfigSchemaResponse
-
-newtype DataConnectorCapabilities = DataConnectorCapabilities
-  { unDataConnectorCapabilities :: HashMap DataConnectorName CapabilitiesInfo
-  }
-  deriving newtype (ToJSON, Semigroup, Monoid, Eq, Cacheable)

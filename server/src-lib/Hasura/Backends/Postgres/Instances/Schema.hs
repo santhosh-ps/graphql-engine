@@ -22,9 +22,9 @@ import Data.List.NonEmpty qualified as NE
 import Data.Parser.JSONPath
 import Data.Text.Casing qualified as C
 import Data.Text.Extended
-import Hasura.Backends.Postgres.SQL.DML as PG hiding (CountType, incOp)
-import Hasura.Backends.Postgres.SQL.Types as PG hiding (FunctionName, TableName)
-import Hasura.Backends.Postgres.SQL.Value as PG
+import Hasura.Backends.Postgres.SQL.DML as Postgres hiding (CountType, incOp)
+import Hasura.Backends.Postgres.SQL.Types as Postgres hiding (FunctionName, TableName)
+import Hasura.Backends.Postgres.SQL.Value as Postgres
 import Hasura.Backends.Postgres.Schema.OnConflict
 import Hasura.Backends.Postgres.Schema.Select
 import Hasura.Backends.Postgres.Types.BoolExp
@@ -47,17 +47,16 @@ import Hasura.GraphQL.Schema.Build qualified as GSB
 import Hasura.GraphQL.Schema.Common
 import Hasura.GraphQL.Schema.Mutation qualified as GSB
 import Hasura.GraphQL.Schema.NamingCase
-import Hasura.GraphQL.Schema.Options (SchemaOptions)
 import Hasura.GraphQL.Schema.Options qualified as Options
 import Hasura.GraphQL.Schema.Parser
   ( Definition,
     FieldParser,
     InputFieldsParser,
     Kind (..),
-    MonadMemoize,
     MonadParse,
     Parser,
     memoize,
+    type (<:),
   )
 import Hasura.GraphQL.Schema.Parser qualified as P
 import Hasura.GraphQL.Schema.Select
@@ -109,7 +108,7 @@ class PostgresSchema (pgKind :: PostgresKind) where
     TableInfo ('Postgres pgKind) ->
     C.GQLNameIdentifier ->
     NESeq (ColumnInfo ('Postgres pgKind)) ->
-    m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
+    SchemaT r m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
   pgkBuildFunctionRelayQueryFields ::
     forall r m n.
     MonadBuildSchema ('Postgres pgKind) r m n =>
@@ -119,7 +118,7 @@ class PostgresSchema (pgKind :: PostgresKind) where
     FunctionInfo ('Postgres pgKind) ->
     TableName ('Postgres pgKind) ->
     NESeq (ColumnInfo ('Postgres pgKind)) ->
-    m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
+    SchemaT r m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
   pgkRelayExtension ::
     Maybe (XRelay ('Postgres pgKind))
 
@@ -140,36 +139,53 @@ instance PostgresSchema 'Cockroach where
 
 -- postgres schema
 
--- Not implemented yet: Pending https://github.com/hasura/graphql-engine-mono/issues/5174"
-instance AggregationPredicatesSchema ('Postgres pgKind) where
-  aggregationPredicatesParser _ _ = return Nothing
-
--- instance (BackendSchema ('Postgres pgKind)) => AggregationPredicatesSchema ('Postgres pgKind) where
---   aggregationPredicatesParser = Agg.defaultAggregationPredicatesParser aggregationFunctions
+instance (BackendSchema ('Postgres pgKind)) => AggregationPredicatesSchema ('Postgres pgKind) where
+  aggregationPredicatesParser = Agg.defaultAggregationPredicatesParser aggregationFunctions
 
 -- | The aggregation functions that are supported by postgres variants.
--- TODO: Add more.
-_aggregationFunctions :: [Agg.FunctionSignature ('Postgres pgKind)]
-_aggregationFunctions =
+aggregationFunctions :: [Agg.FunctionSignature ('Postgres pgKind)]
+aggregationFunctions =
   [ Agg.FunctionSignature
+      { fnName = "avg",
+        fnGQLName = [G.name|avg|],
+        fnReturnType = PGDouble,
+        fnArguments = Agg.SingleArgument PGDouble
+      },
+    Agg.FunctionSignature
+      { fnName = "bool_and",
+        fnGQLName = [G.name|bool_and|],
+        fnReturnType = PGBoolean,
+        fnArguments = Agg.SingleArgument PGBoolean
+      },
+    Agg.FunctionSignature
+      { fnName = "bool_or",
+        fnGQLName = [G.name|bool_or|],
+        fnReturnType = PGBoolean,
+        fnArguments = Agg.SingleArgument PGBoolean
+      },
+    Agg.FunctionSignature
       { fnName = "count",
         fnGQLName = [G.name|count|],
         fnReturnType = PGInteger,
         fnArguments = Agg.ArgumentsStar
       },
     Agg.FunctionSignature
-      { fnName = "bool_and",
-        fnGQLName = [G.name|bool_and|],
-        fnReturnType = PGBoolean,
-        fnArguments =
-          Agg.Arguments
-            ( NE.fromList
-                [ Agg.ArgumentSignature
-                    { argType = PGBoolean,
-                      argName = [G.name|arg0|]
-                    }
-                ]
-            )
+      { fnName = "max",
+        fnGQLName = [G.name|max|],
+        fnReturnType = PGDouble,
+        fnArguments = Agg.SingleArgument PGDouble
+      },
+    Agg.FunctionSignature
+      { fnName = "min",
+        fnGQLName = [G.name|min|],
+        fnReturnType = PGDouble,
+        fnArguments = Agg.SingleArgument PGDouble
+      },
+    Agg.FunctionSignature
+      { fnName = "sum",
+        fnGQLName = [G.name|sum|],
+        fnReturnType = PGDouble,
+        fnArguments = Agg.SingleArgument PGDouble
       },
     Agg.FunctionSignature
       { fnName = "corr",
@@ -188,6 +204,36 @@ _aggregationFunctions =
                     }
                 ]
             )
+      },
+    Agg.FunctionSignature
+      { fnName = "covar_samp",
+        fnGQLName = [G.name|covar_samp|],
+        fnReturnType = PGDouble,
+        fnArguments =
+          Agg.Arguments
+            ( NE.fromList
+                [ Agg.ArgumentSignature
+                    { argType = PGDouble,
+                      argName = [G.name|Y|]
+                    },
+                  Agg.ArgumentSignature
+                    { argType = PGDouble,
+                      argName = [G.name|X|]
+                    }
+                ]
+            )
+      },
+    Agg.FunctionSignature
+      { fnName = "stddev_samp",
+        fnGQLName = [G.name|stddev_samp|],
+        fnReturnType = PGDouble,
+        fnArguments = Agg.SingleArgument PGDouble
+      },
+    Agg.FunctionSignature
+      { fnName = "var_samp",
+        fnGQLName = [G.name|var_samp|],
+        fnReturnType = PGDouble,
+        fnArguments = Agg.SingleArgument PGDouble
       }
   ]
 
@@ -229,6 +275,8 @@ instance
 
   -- indivdual components
   columnParser = columnParser
+  enumParser = enumParser @pgKind
+  possiblyNullable = possiblyNullable
   scalarSelectionArgumentsParser = pgScalarSelectionArgumentsParser
 
   -- NOTE: We don't use @orderByOperators@ directly as this will cause memory
@@ -239,9 +287,9 @@ instance
   orderByOperators _sourceInfo = \case
     HasuraCase -> orderByOperatorsHasuraCase
     GraphqlCase -> orderByOperatorsGraphqlCase
-  comparisonExps = comparisonExps
+  comparisonExps = const comparisonExps
   countTypeInput = countTypeInput
-  aggregateOrderByCountType = PG.PGInteger
+  aggregateOrderByCountType = Postgres.PGInteger
   computedField = computedFieldPG
 
 backendInsertParser ::
@@ -249,7 +297,7 @@ backendInsertParser ::
   MonadBuildSchema ('Postgres pgKind) r m n =>
   SourceInfo ('Postgres pgKind) ->
   TableInfo ('Postgres pgKind) ->
-  m (InputFieldsParser n (PGIR.BackendInsert pgKind (IR.UnpreparedValue ('Postgres pgKind))))
+  SchemaT r m (InputFieldsParser n (PGIR.BackendInsert pgKind (IR.UnpreparedValue ('Postgres pgKind))))
 backendInsertParser sourceName tableInfo =
   fmap BackendInsert <$> onConflictFieldParser sourceName tableInfo
 
@@ -267,7 +315,7 @@ buildTableRelayQueryFields ::
   TableInfo ('Postgres pgKind) ->
   C.GQLNameIdentifier ->
   NESeq (ColumnInfo ('Postgres pgKind)) ->
-  m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
+  SchemaT r m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
 buildTableRelayQueryFields mkRootFieldName sourceName tableName tableInfo gqlName pkeyColumns = do
   tCase <- asks getter
   let fieldDesc = Just $ G.Description $ "fetch data from the table: " <>> tableName
@@ -291,7 +339,7 @@ pgkBuildTableUpdateMutationFields ::
   TableInfo ('Postgres pgKind) ->
   -- | field display name
   C.GQLNameIdentifier ->
-  m [FieldParser n (IR.AnnotatedUpdateG ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
+  SchemaT r m [FieldParser n (IR.AnnotatedUpdateG ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
 pgkBuildTableUpdateMutationFields mkRootFieldName scenario sourceInfo tableName tableInfo gqlName = do
   roleName <- retrieve scRole
   concat . maybeToList <$> runMaybeT do
@@ -348,7 +396,7 @@ updateTableMany ::
   SourceInfo ('Postgres pgKind) ->
   TableInfo ('Postgres pgKind) ->
   C.GQLNameIdentifier ->
-  m (Maybe (P.FieldParser n (IR.AnnotatedUpdateG ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))))
+  SchemaT r m (Maybe (P.FieldParser n (IR.AnnotatedUpdateG ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))))
 updateTableMany mkRootFieldName scenario sourceInfo tableInfo gqlName = runMaybeT do
   tCase <- asks getter
   roleName <- retrieve scRole
@@ -380,7 +428,7 @@ mkMultiRowUpdateParser ::
   SourceInfo ('Postgres pgKind) ->
   TableInfo ('Postgres pgKind) ->
   UpdPermInfo ('Postgres pgKind) ->
-  m (P.InputFieldsParser n (PGIR.BackendUpdate pgKind (IR.UnpreparedValue ('Postgres pgKind))))
+  SchemaT r m (P.InputFieldsParser n (PGIR.BackendUpdate pgKind (IR.UnpreparedValue ('Postgres pgKind))))
 mkMultiRowUpdateParser sourceInfo tableInfo updatePerms = do
   tCase <- asks getter
   tableGQLName <- getTableIdentifierName tableInfo -- getTableGQLName tableInfo
@@ -407,7 +455,7 @@ buildFunctionRelayQueryFields ::
   FunctionInfo ('Postgres pgKind) ->
   TableName ('Postgres pgKind) ->
   NESeq (ColumnInfo ('Postgres pgKind)) ->
-  m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
+  SchemaT r m [FieldParser n (QueryDB ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
 buildFunctionRelayQueryFields mkRootFieldName sourceName functionName functionInfo tableName pkeyColumns = do
   let fieldDesc = Just $ G.Description $ "execute function " <> functionName <<> " which returns " <>> tableName
   fmap afold $
@@ -418,18 +466,18 @@ buildFunctionRelayQueryFields mkRootFieldName sourceName functionName functionIn
 -- Individual components
 
 columnParser ::
-  (MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
+  forall pgKind r m n.
+  MonadBuildSchema ('Postgres pgKind) r m n =>
   ColumnType ('Postgres pgKind) ->
   G.Nullability ->
-  m (Parser 'Both n (IR.ValueWithOrigin (ColumnValue ('Postgres pgKind))))
-columnParser columnType (G.Nullability isNullable) = do
-  tCase <- asks getter
+  SchemaT r m (Parser 'Both n (IR.ValueWithOrigin (ColumnValue ('Postgres pgKind))))
+columnParser columnType nullability =
   -- TODO(PDV): It might be worth memoizing this function even though it isn’t
   -- recursive simply for performance reasons, since it’s likely to be hammered
   -- during schema generation. Need to profile to see whether or not it’s a win.
   peelWithOrigin . fmap (ColumnValue columnType) <$> case columnType of
     ColumnScalar scalarType ->
-      possiblyNullable scalarType <$> do
+      possiblyNullable scalarType nullability <$> do
         -- We convert the value to JSON and use the FromJSON instance. This avoids
         -- having two separate ways of parsing a value in the codebase, which
         -- could lead to inconsistencies.
@@ -457,27 +505,45 @@ columnParser columnType (G.Nullability isNullable) = do
             }
     ColumnEnumReference (EnumReference tableName enumValues tableCustomName) ->
       case nonEmpty (Map.toList enumValues) of
-        Just enumValuesList -> do
-          tableGQLName <- liftEither (getIdentifierQualifiedObject tableName)
-          name <- addEnumSuffix tableGQLName tableCustomName tCase
-          pure $ possiblyNullable PGText $ P.enum name Nothing (mkEnumValue tCase <$> enumValuesList)
+        Just enumValuesList -> enumParser @pgKind tableName enumValuesList tableCustomName nullability
         Nothing -> throw400 ValidationFailed "empty enum values"
+
+enumParser ::
+  forall pgKind r m n.
+  (MonadBuildSchema ('Postgres pgKind) r m n) =>
+  TableName ('Postgres pgKind) ->
+  NonEmpty (EnumValue, EnumValueInfo) ->
+  Maybe G.Name ->
+  G.Nullability ->
+  SchemaT r m (Parser 'Both n (ScalarValue ('Postgres pgKind)))
+enumParser tableName enumValues tableCustomName nullability = do
+  tCase <- asks getter
+  tableGQLName <- liftEither (getIdentifierQualifiedObject tableName)
+  name <- addEnumSuffix tableGQLName tableCustomName tCase
+  pure $ possiblyNullable PGText nullability $ P.enum name Nothing (mkEnumValue tCase <$> enumValues)
   where
-    possiblyNullable scalarType
-      | isNullable = fmap (fromMaybe $ PGNull scalarType) . P.nullable
-      | otherwise = id
-    mkEnumValue :: NamingCase -> (EnumValue, EnumValueInfo) -> (P.Definition P.EnumValueInfo, PGScalarValue)
+    mkEnumValue :: NamingCase -> (EnumValue, EnumValueInfo) -> (P.Definition P.EnumValueInfo, ScalarValue ('Postgres pgKind))
     mkEnumValue tCase (EnumValue value, EnumValueInfo description) =
       ( P.Definition (applyEnumValueCase tCase value) (G.Description <$> description) Nothing [] P.EnumValueInfo,
         PGValText $ G.unName value
       )
+
+possiblyNullable ::
+  (MonadParse m, 'Input <: k) =>
+  ScalarType ('Postgres pgKind) ->
+  G.Nullability ->
+  Parser k m (ScalarValue ('Postgres pgKind)) ->
+  Parser k m (ScalarValue ('Postgres pgKind))
+possiblyNullable scalarType (G.Nullability isNullable)
+  | isNullable = fmap (fromMaybe $ PGNull scalarType) . P.nullable
+  | otherwise = id
 
 pgScalarSelectionArgumentsParser ::
   MonadParse n =>
   ColumnType ('Postgres pgKind) ->
   InputFieldsParser n (Maybe (ScalarSelectionArguments ('Postgres pgKind)))
 pgScalarSelectionArgumentsParser columnType
-  | isScalarColumnWhere PG.isJSONType columnType =
+  | isScalarColumnWhere Postgres.isJSONType columnType =
     P.fieldOptional fieldName description P.string `P.bindFields` fmap join . traverse toColExp
   | otherwise = pure Nothing
   where
@@ -486,9 +552,9 @@ pgScalarSelectionArgumentsParser columnType
     toColExp textValue = case parseJSONPath textValue of
       Left err -> P.parseError $ "parse json path error: " <> toErrorMessage err
       Right [] -> pure Nothing
-      Right jPaths -> pure $ Just $ PG.ColumnOp PG.jsonbPathOp $ PG.SEArray $ map elToColExp jPaths
-    elToColExp (Key k) = PG.SELit $ K.toText k
-    elToColExp (Index i) = PG.SELit $ tshow i
+      Right jPaths -> pure $ Just $ Postgres.ColumnOp Postgres.jsonbPathOp $ Postgres.SEArray $ map elToColExp jPaths
+    elToColExp (Key k) = Postgres.SELit $ K.toText k
+    elToColExp (Index i) = Postgres.SELit $ tshow i
 
 orderByOperatorsHasuraCase ::
   (G.Name, NonEmpty (Definition P.EnumValueInfo, (BasicOrderType ('Postgres pgKind), NullsOrderType ('Postgres pgKind))))
@@ -507,22 +573,22 @@ orderByOperators tCase =
   (Name._order_by,) $
     NE.fromList
       [ ( define (applyEnumValueCase tCase Name._asc) "in ascending order, nulls last",
-          (PG.OTAsc, PG.NullsLast)
+          (Postgres.OTAsc, Postgres.NullsLast)
         ),
         ( define (applyEnumValueCase tCase Name._asc_nulls_first) "in ascending order, nulls first",
-          (PG.OTAsc, PG.NullsFirst)
+          (Postgres.OTAsc, Postgres.NullsFirst)
         ),
         ( define (applyEnumValueCase tCase Name._asc_nulls_last) "in ascending order, nulls last",
-          (PG.OTAsc, PG.NullsLast)
+          (Postgres.OTAsc, Postgres.NullsLast)
         ),
         ( define (applyEnumValueCase tCase Name._desc) "in descending order, nulls first",
-          (PG.OTDesc, PG.NullsFirst)
+          (Postgres.OTDesc, Postgres.NullsFirst)
         ),
         ( define (applyEnumValueCase tCase Name._desc_nulls_first) "in descending order, nulls first",
-          (PG.OTDesc, PG.NullsFirst)
+          (Postgres.OTDesc, Postgres.NullsFirst)
         ),
         ( define (applyEnumValueCase tCase Name._desc_nulls_last) "in descending order, nulls last",
-          (PG.OTDesc, PG.NullsLast)
+          (Postgres.OTDesc, Postgres.NullsLast)
         )
       ]
   where
@@ -530,17 +596,9 @@ orderByOperators tCase =
 
 comparisonExps ::
   forall pgKind m n r.
-  ( BackendSchema ('Postgres pgKind),
-    MonadMemoize m,
-    MonadParse n,
-    MonadError QErr m,
-    MonadReader r m,
-    Has SchemaOptions r,
-    Has MkTypename r,
-    Has NamingCase r
-  ) =>
+  MonadBuildSchema ('Postgres pgKind) r m n =>
   ColumnType ('Postgres pgKind) ->
-  m (Parser 'Input n [ComparisonExp ('Postgres pgKind)])
+  SchemaT r m (Parser 'Input n [ComparisonExp ('Postgres pgKind)])
 comparisonExps = memoize 'comparisonExps \columnType -> do
   -- see Note [Columns in comparison expression are never nullable]
   collapseIfNull <- retrieve Options.soDangerousBooleanCollapse
@@ -841,10 +899,10 @@ comparisonExps = memoize 'comparisonExps \columnType -> do
       let scalarType = unsafePGColumnToBackend columnType
       IR.UVParameter Nothing $
         ColumnValue
-          (ColumnScalar $ PG.PGArray scalarType)
-          (PG.PGValArray $ cvValue <$> columnValues)
+          (ColumnScalar $ Postgres.PGArray scalarType)
+          (Postgres.PGValArray $ cvValue <$> columnValues)
 
-    castExp :: ColumnType ('Postgres pgKind) -> NamingCase -> m (Maybe (Parser 'Input n (CastExp ('Postgres pgKind) (IR.UnpreparedValue ('Postgres pgKind)))))
+    castExp :: ColumnType ('Postgres pgKind) -> NamingCase -> SchemaT r m (Maybe (Parser 'Input n (CastExp ('Postgres pgKind) (IR.UnpreparedValue ('Postgres pgKind)))))
     castExp sourceType tCase = do
       let maybeScalars = case sourceType of
             ColumnScalar PGGeography -> Just (PGGeography, PGGeometry)
@@ -862,8 +920,8 @@ comparisonExps = memoize 'comparisonExps \columnType -> do
 
 geographyWithinDistanceInput ::
   forall pgKind m n r.
-  (MonadMemoize m, MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
-  m (Parser 'Input n (DWithinGeogOp (IR.UnpreparedValue ('Postgres pgKind))))
+  MonadBuildSchema ('Postgres pgKind) r m n =>
+  SchemaT r m (Parser 'Input n (DWithinGeogOp (IR.UnpreparedValue ('Postgres pgKind))))
 geographyWithinDistanceInput = do
   geographyParser <- columnParser (ColumnScalar PGGeography) (G.Nullability False)
   -- FIXME
@@ -882,8 +940,8 @@ geographyWithinDistanceInput = do
 
 geometryWithinDistanceInput ::
   forall pgKind m n r.
-  (MonadMemoize m, MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
-  m (Parser 'Input n (DWithinGeomOp (IR.UnpreparedValue ('Postgres pgKind))))
+  MonadBuildSchema ('Postgres pgKind) r m n =>
+  SchemaT r m (Parser 'Input n (DWithinGeomOp (IR.UnpreparedValue ('Postgres pgKind))))
 geometryWithinDistanceInput = do
   geometryParser <- columnParser (ColumnScalar PGGeometry) (G.Nullability False)
   floatParser <- columnParser (ColumnScalar PGFloat) (G.Nullability False)
@@ -894,8 +952,8 @@ geometryWithinDistanceInput = do
 
 intersectsNbandGeomInput ::
   forall pgKind m n r.
-  (MonadMemoize m, MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
-  m (Parser 'Input n (STIntersectsNbandGeommin (IR.UnpreparedValue ('Postgres pgKind))))
+  MonadBuildSchema ('Postgres pgKind) r m n =>
+  SchemaT r m (Parser 'Input n (STIntersectsNbandGeommin (IR.UnpreparedValue ('Postgres pgKind))))
 intersectsNbandGeomInput = do
   geometryParser <- columnParser (ColumnScalar PGGeometry) (G.Nullability False)
   integerParser <- columnParser (ColumnScalar PGInteger) (G.Nullability False)
@@ -906,8 +964,8 @@ intersectsNbandGeomInput = do
 
 intersectsGeomNbandInput ::
   forall pgKind m n r.
-  (MonadMemoize m, MonadParse n, MonadError QErr m, MonadReader r m, Has MkTypename r, Has NamingCase r) =>
-  m (Parser 'Input n (STIntersectsGeomminNband (IR.UnpreparedValue ('Postgres pgKind))))
+  MonadBuildSchema ('Postgres pgKind) r m n =>
+  SchemaT r m (Parser 'Input n (STIntersectsGeomminNband (IR.UnpreparedValue ('Postgres pgKind))))
 intersectsGeomNbandInput = do
   geometryParser <- columnParser (ColumnScalar PGGeometry) (G.Nullability False)
   integerParser <- columnParser (ColumnScalar PGInteger) (G.Nullability False)
@@ -928,9 +986,9 @@ countTypeInput = \case
   Nothing -> pure $ flip mkCountType Nothing
   where
     mkCountType :: IR.CountDistinct -> Maybe [Column ('Postgres pgKind)] -> CountType ('Postgres pgKind)
-    mkCountType _ Nothing = PG.CTStar
-    mkCountType IR.SelectCountDistinct (Just cols) = PG.CTDistinct cols
-    mkCountType IR.SelectCountNonDistinct (Just cols) = PG.CTSimple cols
+    mkCountType _ Nothing = Postgres.CTStar
+    mkCountType IR.SelectCountDistinct (Just cols) = Postgres.CTDistinct cols
+    mkCountType IR.SelectCountNonDistinct (Just cols) = Postgres.CTSimple cols
 
 -- | Update operator that prepends a value to a column containing jsonb arrays.
 --
@@ -938,14 +996,8 @@ countTypeInput = \case
 -- to other backends yet.
 prependOp ::
   forall pgKind m n r.
-  ( BackendSchema ('Postgres pgKind),
-    MonadReader r m,
-    MonadError QErr m,
-    MonadParse n,
-    Has MkTypename r,
-    Has NamingCase r
-  ) =>
-  SU.UpdateOperator ('Postgres pgKind) m n (IR.UnpreparedValue ('Postgres pgKind))
+  MonadBuildSchema ('Postgres pgKind) r m n =>
+  SU.UpdateOperator ('Postgres pgKind) r m n (IR.UnpreparedValue ('Postgres pgKind))
 prependOp = SU.UpdateOperator {..}
   where
     updateOperatorApplicableColumn = isScalarColumnWhere (== PGJSONB) . ciType
@@ -974,14 +1026,8 @@ prependOp = SU.UpdateOperator {..}
 -- to other backends yet.
 appendOp ::
   forall pgKind m n r.
-  ( BackendSchema ('Postgres pgKind),
-    MonadReader r m,
-    MonadError QErr m,
-    MonadParse n,
-    Has MkTypename r,
-    Has NamingCase r
-  ) =>
-  SU.UpdateOperator ('Postgres pgKind) m n (IR.UnpreparedValue ('Postgres pgKind))
+  MonadBuildSchema ('Postgres pgKind) r m n =>
+  SU.UpdateOperator ('Postgres pgKind) r m n (IR.UnpreparedValue ('Postgres pgKind))
 appendOp = SU.UpdateOperator {..}
   where
     updateOperatorApplicableColumn = isScalarColumnWhere (== PGJSONB) . ciType
@@ -1010,20 +1056,14 @@ appendOp = SU.UpdateOperator {..}
 -- to other backends yet.
 deleteKeyOp ::
   forall pgKind m n r.
-  ( BackendSchema ('Postgres pgKind),
-    MonadReader r m,
-    MonadError QErr m,
-    MonadParse n,
-    Has MkTypename r,
-    Has NamingCase r
-  ) =>
-  SU.UpdateOperator ('Postgres pgKind) m n (IR.UnpreparedValue ('Postgres pgKind))
+  MonadBuildSchema ('Postgres pgKind) r m n =>
+  SU.UpdateOperator ('Postgres pgKind) r m n (IR.UnpreparedValue ('Postgres pgKind))
 deleteKeyOp = SU.UpdateOperator {..}
   where
     updateOperatorApplicableColumn = isScalarColumnWhere (== PGJSONB) . ciType
 
     updateOperatorParser tableGQLName _tableName columns = do
-      let nullableTextParser _ = fmap IR.mkParameter <$> columnParser (ColumnScalar PGText) (G.Nullability True)
+      let nullableTextParser _ = fmap IR.mkParameter <$> BS.columnParser (ColumnScalar PGText) (G.Nullability True)
           desc = "delete key/value pair or string element. key/value pairs are matched based on their key value"
 
       SU.updateOperator
@@ -1042,20 +1082,14 @@ deleteKeyOp = SU.UpdateOperator {..}
 -- to other backends yet.
 deleteElemOp ::
   forall pgKind m n r.
-  ( BackendSchema ('Postgres pgKind),
-    MonadReader r m,
-    MonadError QErr m,
-    MonadParse n,
-    Has MkTypename r,
-    Has NamingCase r
-  ) =>
-  SU.UpdateOperator ('Postgres pgKind) m n (IR.UnpreparedValue ('Postgres pgKind))
+  MonadBuildSchema ('Postgres pgKind) r m n =>
+  SU.UpdateOperator ('Postgres pgKind) r m n (IR.UnpreparedValue ('Postgres pgKind))
 deleteElemOp = SU.UpdateOperator {..}
   where
     updateOperatorApplicableColumn = isScalarColumnWhere (== PGJSONB) . ciType
 
     updateOperatorParser tableGQLName _tableName columns = do
-      let nonNullableIntParser _ = fmap IR.mkParameter <$> columnParser (ColumnScalar PGInteger) (G.Nullability False)
+      let nonNullableIntParser _ = fmap IR.mkParameter <$> BS.columnParser (ColumnScalar PGInteger) (G.Nullability False)
           desc =
             "delete the array element with specified index (negative integers count from the end). "
               <> "throws an error if top level container is not an array"
@@ -1076,20 +1110,14 @@ deleteElemOp = SU.UpdateOperator {..}
 -- to other backends yet.
 deleteAtPathOp ::
   forall pgKind m n r.
-  ( BackendSchema ('Postgres pgKind),
-    MonadReader r m,
-    MonadError QErr m,
-    MonadParse n,
-    Has MkTypename r,
-    Has NamingCase r
-  ) =>
-  SU.UpdateOperator ('Postgres pgKind) m n [IR.UnpreparedValue ('Postgres pgKind)]
+  MonadBuildSchema ('Postgres pgKind) r m n =>
+  SU.UpdateOperator ('Postgres pgKind) r m n [IR.UnpreparedValue ('Postgres pgKind)]
 deleteAtPathOp = SU.UpdateOperator {..}
   where
     updateOperatorApplicableColumn = isScalarColumnWhere (== PGJSONB) . ciType
 
     updateOperatorParser tableGQLName _tableName columns = do
-      let nonNullableTextListParser _ = P.list . fmap IR.mkParameter <$> columnParser (ColumnScalar PGText) (G.Nullability False)
+      let nonNullableTextListParser _ = P.list . fmap IR.mkParameter <$> BS.columnParser (ColumnScalar PGText) (G.Nullability False)
           desc = "delete the field or element with specified path (for JSON arrays, negative integers count from the end)"
 
       SU.updateOperator
@@ -1107,7 +1135,7 @@ updateOperators ::
   MonadBuildSchema ('Postgres pgKind) r m n =>
   TableInfo ('Postgres pgKind) ->
   UpdPermInfo ('Postgres pgKind) ->
-  m (InputFieldsParser n (HashMap (Column ('Postgres pgKind)) (UpdateOpExpression (IR.UnpreparedValue ('Postgres pgKind)))))
+  SchemaT r m (InputFieldsParser n (HashMap (Column ('Postgres pgKind)) (UpdateOpExpression (IR.UnpreparedValue ('Postgres pgKind)))))
 updateOperators tableInfo updatePermissions = do
   SU.buildUpdateOperators
     (PGIR.UpdateSet <$> SU.presetColumns updatePermissions)

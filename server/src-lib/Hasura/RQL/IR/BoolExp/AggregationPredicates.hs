@@ -39,41 +39,47 @@ import Hasura.SQL.Backend (BackendType)
 --         ))
 --      { ... }
 --
--- Note that we make no attemt at modelling window functions or so-called
+-- Note that we make no attempt at modelling window functions or so-called
 -- 'analytical' functions such as 'percentile_cont'.
 data AggregationPredicatesImplementation (b :: BackendType) field = AggregationPredicatesImplementation
   { aggRelation :: RelInfo b,
-    aggPredicates :: [AggregationPredicate b field]
+    aggRowPermission :: AnnBoolExp b field,
+    aggPredicate :: AggregationPredicate b field
   }
   deriving stock (Foldable, Traversable, Functor, Generic)
 
 deriving instance
   ( B.Backend b,
-    Eq (AggregationPredicate b field)
+    Eq (AggregationPredicate b field),
+    Eq (AnnBoolExp b field)
   ) =>
   Eq (AggregationPredicatesImplementation b field)
 
 deriving instance
   ( B.Backend b,
-    Show (AggregationPredicate b field)
+    Show (AggregationPredicate b field),
+    Show (AnnBoolExp b field)
   ) =>
   Show (AggregationPredicatesImplementation b field)
 
 instance
   ( B.Backend b,
-    Cacheable (AggregationPredicate b field)
+    Cacheable (AggregationPredicate b field),
+    Cacheable (AnnBoolExp b field)
   ) =>
   Cacheable (AggregationPredicatesImplementation b field)
 
 instance
   ( B.Backend b,
-    Hashable (AggregationPredicate b field)
+    Hashable (AggregationPredicate b field),
+    Hashable (AnnBoolExp b field)
   ) =>
   Hashable (AggregationPredicatesImplementation b field)
 
 instance
   ( B.Backend b,
-    NFData (AggregationPredicate b field)
+    NFData (AggregationPredicate b field),
+    NFData (AnnBoolExp b field)
   ) =>
   NFData (AggregationPredicatesImplementation b field)
 
@@ -94,7 +100,7 @@ instance
   toJSONKeyValue AggregationPredicatesImplementation {..} =
     ( fromText "aggregation_predicates",
       toJSON
-        [ ("predicates" :: Text, toJSON $ map toJSONKeyValue aggPredicates),
+        [ ("predicate" :: Text, toJSON $ toJSONKeyValue aggPredicate),
           ("relation", toJSON aggRelation)
         ]
     )

@@ -1,5 +1,5 @@
 import { FastifyRequest } from "fastify"
-import { ConfigSchemaResponse } from "./types"
+import { ConfigSchemaResponse } from "@hasura/dc-api-types"
 
 export type Config = {
   db: string,
@@ -32,7 +32,7 @@ export const tryGetConfig = (request: FastifyRequest): Config | null => {
 }
 
 export const configSchema: ConfigSchemaResponse = {
-  configSchema: {
+  config_schema: {
     type: "object",
     nullable: false,
     properties: {
@@ -43,7 +43,7 @@ export const configSchema: ConfigSchemaResponse = {
       tables: {
         description: "List of tables to make available in the schema and for querying",
         type: "array",
-        items: { $ref: "#/otherSchemas/TableName" },
+        items: { $ref: "#/other_schemas/TableName" },
         nullable: true
       },
       include_sqlite_meta_tables: {
@@ -59,7 +59,7 @@ export const configSchema: ConfigSchemaResponse = {
       }
     }
   },
-  otherSchemas: {
+  other_schemas: {
     TableName: {
       nullable: false,
       type: "string"

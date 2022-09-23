@@ -49,6 +49,7 @@ module Hasura.Backends.Postgres.SQL.DML
     TypeAnn (TypeAnn),
     ValuesExp (ValuesExp),
     WhereFrag (WhereFrag),
+    dummySelectList,
     applyJsonBuildArray,
     applyJsonBuildObj,
     applyRowToJson,
@@ -74,9 +75,11 @@ module Hasura.Backends.Postgres.SQL.DML
     mkIdenFromExp,
     mkLateralFromItem,
     mkQIdenExp,
+    mkQIdentifier,
     mkQIdentifierTable,
     mkQual,
     mkRowExp,
+    mkIdentifierSQLExp,
     mkSIdenExp,
     mkSQLOpExp,
     mkSelFromExp,
@@ -149,6 +152,11 @@ mkSelect =
     Nothing
     Nothing
     Nothing
+
+-- | A dummy select list to avoid an empty select list, which doesn't work for cockroach db.
+--   This is just the value @1@ without an alias.
+dummySelectList :: [Extractor]
+dummySelectList = [Extractor (SEUnsafe "1") Nothing]
 
 newtype LimitExp
   = LimitExp SQLExp
@@ -345,6 +353,9 @@ mkQIdentifier q t = QIdentifier (QualifiedIdentifier (toIdentifier q) Nothing) (
 
 mkQIdentifierTable :: (IsIdentifier a) => QualifiedTable -> a -> QIdentifier
 mkQIdentifierTable q = QIdentifier (mkQual q) . toIdentifier
+
+mkIdentifierSQLExp :: forall a. IsIdentifier a => Qual -> a -> SQLExp
+mkIdentifierSQLExp q = SEQIdentifier . QIdentifier q . toIdentifier
 
 data QIdentifier
   = QIdentifier Qual Identifier
@@ -902,7 +913,7 @@ mkExists :: FromItem -> BoolExp -> BoolExp
 mkExists fromItem whereFrag =
   BEExists
     mkSelect
-      { selExtr = [Extractor (SEUnsafe "1") Nothing],
+      { selExtr = dummySelectList,
         selFrom = Just $ FromExp $ pure fromItem,
         selWhere = Just $ WhereFrag whereFrag
       }

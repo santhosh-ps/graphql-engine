@@ -114,6 +114,8 @@ module Hasura.RQL.Types.SchemaCache
     BoolExpM (..),
     BoolExpCtx (..),
     getOpExpDeps,
+    BackendInfoWrapper (..),
+    BackendCache,
   )
 where
 
@@ -126,8 +128,8 @@ import Data.HashSet qualified as HS
 import Data.Int (Int64)
 import Data.Text.Extended
 import Database.MSSQL.Transaction qualified as MSSQL
-import Database.PG.Query qualified as Q
-import Hasura.Backends.Postgres.Connection qualified as PG
+import Database.PG.Query qualified as PG
+import Hasura.Backends.Postgres.Connection qualified as Postgres
 import Hasura.Base.Error
 import Hasura.GraphQL.Context (GQLContext, RoleContext)
 import Hasura.GraphQL.Schema.Options qualified as Options
@@ -163,6 +165,8 @@ import Hasura.RQL.Types.SchemaCacheTypes
 import Hasura.RQL.Types.Source
 import Hasura.RQL.Types.Table
 import Hasura.SQL.AnyBackend qualified as AB
+import Hasura.SQL.Backend
+import Hasura.SQL.BackendMap
 import Hasura.Server.Types
 import Hasura.Session
 import Hasura.Tracing (TraceT)
@@ -484,6 +488,18 @@ askFunctionInfo sourceName functionName = do
 
 -------------------------------------------------------------------------------
 
+newtype BackendInfoWrapper (b :: BackendType) = BackendInfoWrapper {unBackendInfoWrapper :: BackendInfo b}
+
+deriving newtype instance (ToJSON (BackendInfo b)) => ToJSON (BackendInfoWrapper b)
+
+deriving newtype instance (Semigroup (BackendInfo b)) => Semigroup (BackendInfoWrapper b)
+
+deriving newtype instance (Monoid (BackendInfo b)) => Monoid (BackendInfoWrapper b)
+
+type BackendCache = BackendMap BackendInfoWrapper
+
+-------------------------------------------------------------------------------
+
 data SchemaCache = SchemaCache
   { scSources :: SourceCache,
     scActions :: ActionCache,
@@ -504,7 +520,7 @@ data SchemaCache = SchemaCache
     scSetGraphqlIntrospectionOptions :: SetGraphqlIntrospectionOptions,
     scTlsAllowlist :: [TlsAllow],
     scQueryCollections :: QueryCollections,
-    scDataConnectorCapabilities :: DataConnectorCapabilities,
+    scBackendCache :: BackendCache,
     scSourceHealthChecks :: SourceHealthCheckCache
   }
 
@@ -531,7 +547,7 @@ instance ToJSON SchemaCache where
         "set_graphql_introspection_options" .= toJSON scSetGraphqlIntrospectionOptions,
         "tls_allowlist" .= toJSON scTlsAllowlist,
         "query_collection" .= toJSON scQueryCollections,
-        "data_connector_capabilities" .= toJSON scDataConnectorCapabilities
+        "backend_cache" .= toJSON scBackendCache
       ]
 
 getAllRemoteSchemas :: SchemaCache -> [RemoteSchemaName]
@@ -558,7 +574,7 @@ instance (SourceM m) => SourceM (TraceT m) where
 
 newtype SourceT m a = SourceT {runSourceT :: SourceName -> m a}
   deriving
-    (Functor, Applicative, Monad, MonadIO, MonadError e, MonadState s, MonadWriter w, PG.MonadTx, TableCoreInfoRM b, CacheRM)
+    (Functor, Applicative, Monad, MonadIO, MonadError e, MonadState s, MonadWriter w, Postgres.MonadTx, TableCoreInfoRM b, CacheRM)
     via (ReaderT SourceName m)
   deriving (MonadTrans) via (ReaderT SourceName)
 
@@ -584,7 +600,7 @@ instance (TableCoreInfoRM b m) => TableCoreInfoRM b (TraceT m) where
 
 newtype TableCoreCacheRT b m a = TableCoreCacheRT {runTableCoreCacheRT :: (SourceName, Dependency (TableCoreCache b)) -> m a}
   deriving
-    (Functor, Applicative, Monad, MonadIO, MonadError e, MonadState s, MonadWriter w, PG.MonadTx)
+    (Functor, Applicative, Monad, MonadIO, MonadError e, MonadState s, MonadWriter w, Postgres.MonadTx)
     via (ReaderT (SourceName, Dependency (TableCoreCache b)) m)
   deriving (MonadTrans) via (ReaderT (SourceName, Dependency (TableCoreCache b)))
 
@@ -618,7 +634,7 @@ instance (TableInfoRM b m) => TableInfoRM b (TraceT m) where
 
 newtype TableCacheRT b m a = TableCacheRT {runTableCacheRT :: (SourceName, TableCache b) -> m a}
   deriving
-    (Functor, Applicative, Monad, MonadIO, MonadError e, MonadState s, MonadWriter w, PG.MonadTx)
+    (Functor, Applicative, Monad, MonadIO, MonadError e, MonadState s, MonadWriter w, Postgres.MonadTx)
     via (ReaderT (SourceName, TableCache b) m)
   deriving (MonadTrans) via (ReaderT (SourceName, TableCache b))
 
@@ -655,7 +671,7 @@ instance (Monoid w, CacheRM m) => CacheRM (WriterT w m) where
 instance (CacheRM m) => CacheRM (TraceT m) where
   askSchemaCache = lift askSchemaCache
 
-instance (CacheRM m) => CacheRM (Q.TxET QErr m) where
+instance (CacheRM m) => CacheRM (PG.TxET QErr m) where
   askSchemaCache = lift askSchemaCache
 
 instance (CacheRM m) => CacheRM (MSSQL.TxET e m) where

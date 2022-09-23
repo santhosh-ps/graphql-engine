@@ -20,19 +20,19 @@ import Data.Aeson.Casing
 import Data.Aeson.TH
 import Data.HashMap.Strict qualified as HM
 import Data.HashSet qualified as HS
-import Database.PG.Query qualified as Q
+import Database.PG.Query qualified as PG
 import Hasura.Base.Error
 import Hasura.Logging
 import Hasura.Metadata.Class
 import Hasura.Prelude
 import Hasura.RQL.DDL.Schema (runCacheRWT)
 import Hasura.RQL.DDL.Schema.Catalog
-import Hasura.RQL.Types.Numeric (NonNegative)
-import Hasura.RQL.Types.Numeric qualified as Numeric
 import Hasura.RQL.Types.Run
 import Hasura.RQL.Types.SchemaCache
 import Hasura.RQL.Types.SchemaCache.Build
 import Hasura.RQL.Types.Source
+import Hasura.SQL.Backend (BackendType (..))
+import Hasura.SQL.BackendMap qualified as BackendMap
 import Hasura.Server.Logging
 import Hasura.Server.SchemaCacheRef
   ( SchemaCacheRef,
@@ -42,6 +42,7 @@ import Hasura.Server.SchemaCacheRef
 import Hasura.Server.Types
 import Hasura.Session
 import Network.HTTP.Client qualified as HTTP
+import Refined (NonNegative, Refined, unrefine)
 
 data ThreadType
   = TTListener
@@ -147,16 +148,16 @@ if listen started after schema cache init start time.
 startSchemaSyncListenerThread ::
   C.ForkableMonadIO m =>
   Logger Hasura ->
-  Q.PGPool ->
+  PG.PGPool ->
   InstanceId ->
-  NonNegative Milliseconds ->
+  Refined NonNegative Milliseconds ->
   STM.TMVar MetadataResourceVersion ->
   ManagedT m (Immortal.Thread)
 startSchemaSyncListenerThread logger pool instanceId interval metaVersionRef = do
   -- Start listener thread
   listenerThread <-
     C.forkManagedT "SchemeUpdate.listener" logger $
-      listener logger pool metaVersionRef (Numeric.getNonNegative interval)
+      listener logger pool metaVersionRef (unrefine interval)
   logThreadStarted logger instanceId TTListener listenerThread
   pure listenerThread
 
@@ -195,10 +196,10 @@ forcePut :: STM.TMVar a -> a -> IO ()
 forcePut v a = STM.atomically $ STM.tryTakeTMVar v >> STM.putTMVar v a
 
 schemaVersionCheckHandler ::
-  Q.PGPool -> STM.TMVar MetadataResourceVersion -> IO (Either QErr ())
+  PG.PGPool -> STM.TMVar MetadataResourceVersion -> IO (Either QErr ())
 schemaVersionCheckHandler pool metaVersionRef =
   runExceptT
-    ( Q.runTx pool (Q.RepeatableRead, Nothing) $
+    ( PG.runTx pool (PG.RepeatableRead, Nothing) $
         fetchMetadataResourceVersionFromCatalog
     )
     >>= \case
@@ -246,7 +247,7 @@ toLogError es qerr mrv = not $ isQErrLastSeen || isMetadataResourceVersionLastSe
 listener ::
   MonadIO m =>
   Logger Hasura ->
-  Q.PGPool ->
+  PG.PGPool ->
   STM.TMVar MetadataResourceVersion ->
   Milliseconds ->
   m void
@@ -358,7 +359,10 @@ refreshSchemaCache
                                 CacheInvalidations
                                   { ciMetadata = True,
                                     ciRemoteSchemas = HS.fromList $ getAllRemoteSchemas schemaCache,
-                                    ciSources = HS.fromList $ HM.keys $ scSources schemaCache
+                                    ciSources = HS.fromList $ HM.keys $ scSources schemaCache,
+                                    ciDataConnectors =
+                                      maybe mempty (HS.fromList . HM.keys . unBackendInfoWrapper) $
+                                        BackendMap.lookup @'DataConnector $ scBackendCache schemaCache
                                   }
                       logInfo logger threadType $ object ["currentVersion" .= engineResourceVersion, "latestResourceVersion" .= latestResourceVersion]
                       buildSchemaCacheWithOptions CatalogSync cacheInvalidations metadata

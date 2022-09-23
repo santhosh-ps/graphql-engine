@@ -28,6 +28,9 @@ import Prelude
 
 --------------------------------------------------------------------------------
 
+-- | The fully qualified name of a table. The last element in the list is the table name
+-- and all other elements represent namespacing of the table name.
+-- For example, for a database that has schemas, the name would be '[<schema>,<table name>]'
 newtype TableName = TableName {unTableName :: NonEmpty Text}
   deriving stock (Eq, Ord, Show, Generic, Data)
   deriving anyclass (NFData, Hashable)
@@ -43,11 +46,11 @@ instance HasCodec TableName where
 
 -- | Table schema data from the 'SchemaResponse'.
 data TableInfo = TableInfo
-  { dtiName :: TableName,
-    dtiColumns :: [API.V0.ColumnInfo],
-    dtiPrimaryKey :: Maybe [API.V0.ColumnName],
-    dtiDescription :: Maybe Text,
-    dtiForeignKeys :: Maybe ForeignKeys
+  { _tiName :: TableName,
+    _tiColumns :: [API.V0.ColumnInfo],
+    _tiPrimaryKey :: Maybe [API.V0.ColumnName],
+    _tiForeignKeys :: Maybe ForeignKeys,
+    _tiDescription :: Maybe Text
   }
   deriving stock (Eq, Ord, Show, Generic, Data)
   deriving anyclass (NFData, Hashable)
@@ -57,11 +60,11 @@ instance HasCodec TableInfo where
   codec =
     object "TableInfo" $
       TableInfo
-        <$> requiredField "name" "The name of the table" .= dtiName
-        <*> requiredField "columns" "The columns of the table" .= dtiColumns
-        <*> optionalFieldOrNull "primary_key" "The primary key of the table" .= dtiPrimaryKey
-        <*> optionalFieldOrNull "description" "Description of the table" .= dtiDescription
-        <*> optionalFieldOrNull "foreign_keys" "Foreign Key Constraints" .= dtiForeignKeys
+        <$> requiredField "name" "The name of the table" .= _tiName
+        <*> requiredField "columns" "The columns of the table" .= _tiColumns
+        <*> optionalFieldOrNull "primary_key" "The primary key of the table" .= _tiPrimaryKey
+        <*> optionalFieldOrNull "foreign_keys" "Foreign key constraints" .= _tiForeignKeys
+        <*> optionalFieldOrNull "description" "Description of the table" .= _tiDescription
 
 --------------------------------------------------------------------------------
 
@@ -79,8 +82,8 @@ newtype ConstraintName = ConstraintName {unConstraintName :: Text}
   deriving anyclass (NFData, Hashable)
 
 data Constraint = Constraint
-  { cForeignTable :: TableName,
-    cColumnMapping :: HashMap Text Text
+  { _cForeignTable :: TableName,
+    _cColumnMapping :: HashMap Text Text
   }
   deriving stock (Eq, Ord, Show, Generic, Data)
   deriving anyclass (NFData, Hashable)
@@ -90,5 +93,5 @@ instance HasCodec Constraint where
   codec =
     object "Constraint" $
       Constraint
-        <$> requiredField "foreign_table" "The table referenced by the foreign key in the child table." .= cForeignTable
-        <*> requiredField "column_mapping" "The columns on which you want want to define the foreign key." .= cColumnMapping
+        <$> requiredField "foreign_table" "The table referenced by the foreign key in the child table." .= _cForeignTable
+        <*> requiredField "column_mapping" "The columns on which you want want to define the foreign key." .= _cColumnMapping

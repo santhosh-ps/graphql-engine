@@ -10,7 +10,6 @@ import Hasura.Backends.DataConnector.API.V0.ColumnSpec (genColumnInfo, genColumn
 import Hasura.Generator.Common
 import Hasura.Prelude
 import Hedgehog
-import Hedgehog.Gen
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range
 import Test.Aeson.Utils
@@ -36,8 +35,8 @@ spec = do
             (TableName ["my_table_name"])
             [ColumnInfo (ColumnName "id") StringTy False Nothing]
             (Just [ColumnName "id"])
-            (Just "my description")
             Nothing
+            (Just "my description")
         )
         [aesonQQ|
           { "name": ["my_table_name"],
@@ -52,8 +51,8 @@ spec = do
             (TableName ["my_table_name"])
             [ColumnInfo (ColumnName "id") StringTy False Nothing]
             (Just [ColumnName "id"])
-            (Just "my description")
             (Just $ ForeignKeys $ HashMap.singleton (ConstraintName "Artist") (Constraint (TableName ["artist_table"]) (HashMap.singleton "ArtistId" "ArtistId")))
+            (Just "my description")
         )
         [aesonQQ|
           { "name": ["my_table_name"],
@@ -73,17 +72,17 @@ spec = do
     jsonOpenApiProperties genTableInfo
 
 genTableName :: MonadGen m => m TableName
-genTableName = TableName <$> Gen.nonEmpty (linear 1 3) (text (linear 0 10) unicode)
+genTableName = TableName <$> Gen.nonEmpty (linear 1 3) (genArbitraryAlphaNumText defaultRange)
 
 genForeignKeys :: MonadGen m => m ForeignKeys
 genForeignKeys = ForeignKeys <$> genHashMap genConstraintName genConstraint defaultRange
 
 genConstraintName :: MonadGen m => m ConstraintName
-genConstraintName = ConstraintName <$> text (linear 0 10) unicode
+genConstraintName = ConstraintName <$> genArbitraryAlphaNumText defaultRange
 
 genConstraint :: MonadGen m => m Constraint
 genConstraint =
-  let mapping = genHashMap (text (linear 0 10) unicode) (text (linear 0 10) unicode) defaultRange
+  let mapping = genHashMap (genArbitraryAlphaNumText defaultRange) (genArbitraryAlphaNumText defaultRange) defaultRange
    in Constraint <$> genTableName <*> mapping
 
 -- | Note: this generator is intended for serialization tests only and does not ensure valid Foreign Key Constraints.
@@ -91,7 +90,7 @@ genTableInfo :: MonadGen m => m TableInfo
 genTableInfo =
   TableInfo
     <$> genTableName
-    <*> Gen.list (linear 0 5) genColumnInfo
-    <*> Gen.maybe (Gen.list (linear 0 5) genColumnName)
-    <*> Gen.maybe (text (linear 0 20) unicode)
+    <*> Gen.list defaultRange genColumnInfo
+    <*> Gen.maybe (Gen.list defaultRange genColumnName)
     <*> Gen.maybe genForeignKeys
+    <*> Gen.maybe (genArbitraryAlphaNumText defaultRange)

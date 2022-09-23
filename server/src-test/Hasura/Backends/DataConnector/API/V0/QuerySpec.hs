@@ -4,21 +4,20 @@
 module Hasura.Backends.DataConnector.API.V0.QuerySpec (spec) where
 
 import Data.Aeson qualified as J
-import Data.Aeson.KeyMap qualified as KM
 import Data.Aeson.QQ.Simple (aesonQQ)
+import Data.HashMap.Strict qualified as HashMap
 import Hasura.Backends.DataConnector.API.V0
 import Hasura.Backends.DataConnector.API.V0.AggregateSpec (genAggregate)
 import Hasura.Backends.DataConnector.API.V0.ColumnSpec (genColumnName)
 import Hasura.Backends.DataConnector.API.V0.ExpressionSpec (genExpression)
 import Hasura.Backends.DataConnector.API.V0.OrderBySpec (genOrderBy)
 import Hasura.Backends.DataConnector.API.V0.RelationshipsSpec (genRelationshipName, genTableRelationships)
-import Hasura.Backends.DataConnector.API.V0.Scalar.ValueSpec qualified as Scalar
 import Hasura.Backends.DataConnector.API.V0.TableSpec (genTableName)
+import Hasura.Generator.Common (defaultRange, genArbitraryAlphaNumText)
 import Hasura.Prelude
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
-import Hedgehog.Range (linear)
-import Test.Aeson.Utils (genKeyMap, genValue, jsonOpenApiProperties, testToFromJSONToSchema)
+import Test.Aeson.Utils (genValue, jsonOpenApiProperties, testToFromJSONToSchema)
 import Test.Hspec
 
 spec :: Spec
@@ -28,27 +27,27 @@ spec = do
       testToFromJSONToSchema
         (ColumnField $ ColumnName "my_column_name")
         [aesonQQ|
-        { "type": "column",
-          "column": "my_column_name"
-        }
-      |]
+          { "type": "column",
+            "column": "my_column_name"
+          }
+        |]
     describe "RelationshipField" $ do
       let query = Query (Just mempty) Nothing Nothing Nothing Nothing Nothing
       testToFromJSONToSchema
         (RelField $ RelationshipField (RelationshipName "a_relationship") query)
         [aesonQQ|
-        { "type": "relationship",
-          "relationship": "a_relationship",
-          "query": {"fields": {}}
-        }
-      |]
+          { "type": "relationship",
+            "relationship": "a_relationship",
+            "query": {"fields": {}}
+          }
+        |]
     jsonOpenApiProperties genField
 
   describe "Query" $ do
     let query =
           Query
-            { _qFields = Just $ KM.fromList [("my_field_alias", ColumnField $ ColumnName "my_field_name")],
-              _qAggregates = Just $ KM.fromList [("my_aggregate", StarCount)],
+            { _qFields = Just $ HashMap.fromList [(FieldName "my_field_alias", ColumnField $ ColumnName "my_field_name")],
+              _qAggregates = Just $ HashMap.fromList [(FieldName "my_aggregate", StarCount)],
               _qLimit = Just 10,
               _qOffset = Just 20,
               _qWhere = Just $ And [],
@@ -149,6 +148,13 @@ genField =
     [ColumnField <$> genColumnName]
     [RelField <$> genRelationshipField]
 
+genFieldName :: MonadGen m => m FieldName
+genFieldName = FieldName <$> genArbitraryAlphaNumText defaultRange
+
+genFieldMap :: MonadGen m => m value -> m (HashMap FieldName value)
+genFieldMap genValue' =
+  HashMap.fromList <$> Gen.list defaultRange ((,) <$> genFieldName <*> genValue')
+
 genRelationshipField :: MonadGen m => m RelationshipField
 genRelationshipField =
   RelationshipField
@@ -158,10 +164,10 @@ genRelationshipField =
 genQuery :: MonadGen m => m Query
 genQuery =
   Query
-    <$> Gen.maybe (genKeyMap genField)
-    <*> Gen.maybe (genKeyMap genAggregate)
-    <*> Gen.maybe (Gen.int (linear 0 5))
-    <*> Gen.maybe (Gen.int (linear 0 5))
+    <$> Gen.maybe (genFieldMap genField)
+    <*> Gen.maybe (genFieldMap genAggregate)
+    <*> Gen.maybe (Gen.int defaultRange)
+    <*> Gen.maybe (Gen.int defaultRange)
     <*> Gen.maybe genExpression
     <*> Gen.maybe genOrderBy
 
@@ -169,7 +175,7 @@ genQueryRequest :: MonadGen m => m QueryRequest
 genQueryRequest =
   QueryRequest
     <$> genTableName
-    <*> Gen.list (linear 0 5) genTableRelationships
+    <*> Gen.list defaultRange genTableRelationships
     <*> genQuery
 
 genFieldValue :: MonadGen m => m FieldValue
@@ -182,5 +188,5 @@ genFieldValue =
 genQueryResponse :: MonadGen m => m QueryResponse
 genQueryResponse =
   QueryResponse
-    <$> Gen.maybe (Gen.list (linear 0 5) (genKeyMap genFieldValue))
-    <*> Gen.maybe (genKeyMap Scalar.genValue)
+    <$> Gen.maybe (Gen.list defaultRange (genFieldMap genFieldValue))
+    <*> Gen.maybe (genFieldMap genValue)

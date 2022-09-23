@@ -28,7 +28,10 @@ the server, where you don't care about concurrent requests and where the work
 is CPU-bound (because in the future reporting will highlight stable metrics
 like CPU mutator time and allocations).
 
-**This is currently a WIP and not surfaced in reports**
+Because of the overhead of timing things in bash you probably don't want to
+rely on the wallclock latency numbers for queries that are faster than 100 ms.
+These numbers may also be noisier since we're running single-threaded and so
+taking fewer samples.
 
 ### bench.sh
 
@@ -107,11 +110,13 @@ follow the pattern from `chinook`. The process looks like:
   close to the throughput limit; experiment locally to find an appropriate
   upper bounds for load.
 
-- set `preAllocatedVUs` juar high enough so that K6 doesn't have to allocate
+- set `preAllocatedVUs` value high enough so that K6 doesn't have to allocate
   VUs during test, and you see no `dropped_iterations` reported
 
-- look for `✓ no error in body` in K6 output to make sure your query is correct
-  (assuming you're not benchmarking error handling)
+- First set `discardResponseBodies: false`, look for `✓ no error in body` in K6
+  output to make sure your query is correct (assuming you're not benchmarking
+  error handling). Then set `discardResponseBodies: true` so that we're not 
+  measuring any processing (like body decompression) performed by K6.
 
 - document the purpose of the benchmark. e.g. "large response bodies at high
   throughput", or "complex joins with conditions on a table with a lot of data,

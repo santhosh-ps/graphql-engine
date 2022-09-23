@@ -11,16 +11,17 @@ module Hasura.Backends.DataConnector.API.V0.ExpressionSpec
   )
 where
 
+import Data.Aeson
 import Data.Aeson.QQ.Simple (aesonQQ)
 import Hasura.Backends.DataConnector.API.V0
 import Hasura.Backends.DataConnector.API.V0.ColumnSpec (genColumnName)
 import Hasura.Backends.DataConnector.API.V0.RelationshipsSpec (genRelationshipName)
-import Hasura.Backends.DataConnector.API.V0.Scalar.ValueSpec (genValue)
+import Hasura.Backends.DataConnector.API.V0.TableSpec (genTableName)
+import Hasura.Generator.Common (defaultRange, genArbitraryAlphaNumText)
 import Hasura.Prelude
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
-import Hedgehog.Internal.Range
-import Test.Aeson.Utils (jsonOpenApiProperties, testToFromJSONToSchema)
+import Test.Aeson.Utils (genValue, jsonOpenApiProperties, testToFromJSONToSchema)
 import Test.Hspec
 
 spec :: Spec
@@ -66,16 +67,23 @@ spec = do
 
   describe "ComparisonColumn" $ do
     testToFromJSONToSchema
-      (ComparisonColumn [RelationshipName "table1", RelationshipName "table2"] (ColumnName "column_name"))
-      [aesonQQ|{"path": ["table1", "table2"], "name": "column_name"}|]
+      (ComparisonColumn QueryTable (ColumnName "column_name"))
+      [aesonQQ|{"path": ["$"], "name": "column_name"}|]
 
     jsonOpenApiProperties genComparisonColumn
+
+  describe "ColumnPath" $ do
+    describe "QueryTable" $
+      testToFromJSONToSchema QueryTable [aesonQQ|["$"]|]
+    describe "CurrentTable" $
+      testToFromJSONToSchema CurrentTable [aesonQQ|[]|]
+    jsonOpenApiProperties genColumnPath
 
   describe "ComparisonValue" $ do
     describe "AnotherColumn" $
       testToFromJSONToSchema
-        (AnotherColumn $ ComparisonColumn [] (ColumnName "my_column_name"))
-        [aesonQQ|{"type": "column", "column": {"path": [], "name": "my_column_name"}}|]
+        (AnotherColumn $ ComparisonColumn CurrentTable (ColumnName "my_column_name"))
+        [aesonQQ|{"type": "column", "column": {"name": "my_column_name"}}|]
     describe "ScalarValue" $
       testToFromJSONToSchema
         (ScalarValue $ String "scalar value")
@@ -83,8 +91,27 @@ spec = do
 
     jsonOpenApiProperties genComparisonValue
 
+  describe "ExistsInTable" $ do
+    describe "RelatedTable" $
+      testToFromJSONToSchema
+        (RelatedTable (RelationshipName "my_relation"))
+        [aesonQQ|
+          { "type": "related",
+            "relationship": "my_relation"
+          }
+        |]
+    describe "UnrelatedTable" $
+      testToFromJSONToSchema
+        (UnrelatedTable (TableName ["my_table_name"]))
+        [aesonQQ|
+          { "type": "unrelated",
+            "table": ["my_table_name"]
+          }
+        |]
+    jsonOpenApiProperties genExistsInTable
+
   describe "Expression" $ do
-    let comparisonColumn = ComparisonColumn [] (ColumnName "my_column_name")
+    let comparisonColumn = ComparisonColumn CurrentTable (ColumnName "my_column_name")
     let scalarValue = ScalarValue $ String "scalar value"
     let scalarValues = [String "scalar value"]
     let unaryComparisonExpression = ApplyUnaryComparisonOperator IsNull comparisonColumn
@@ -99,7 +126,7 @@ spec = do
               {
                 "type": "unary_op",
                 "operator": "is_null",
-                "column": { "path": [], "name": "my_column_name" }
+                "column": { "name": "my_column_name" }
               }
             ]
           }
@@ -115,7 +142,7 @@ spec = do
               {
                 "type": "unary_op",
                 "operator": "is_null",
-                "column": { "path": [], "name": "my_column_name" }
+                "column": { "name": "my_column_name" }
               }
             ]
           }
@@ -130,10 +157,29 @@ spec = do
             "expression": {
               "type": "unary_op",
               "operator": "is_null",
-              "column": { "path": [], "name": "my_column_name" }
+              "column": { "name": "my_column_name" }
             }
           }
         |]
+
+    describe "Exists" $ do
+      testToFromJSONToSchema
+        (Exists (RelatedTable (RelationshipName "relation")) unaryComparisonExpression)
+        [aesonQQ|
+          {
+            "type": "exists",
+            "in_table": {
+              "type": "related",
+              "relationship": "relation"
+            },
+            "where": {
+              "type": "unary_op",
+              "operator": "is_null",
+              "column": { "name": "my_column_name" }
+            }
+          }
+        |]
+
     describe "BinaryComparisonOperator" $ do
       testToFromJSONToSchema
         (ApplyBinaryComparisonOperator Equal comparisonColumn scalarValue)
@@ -141,7 +187,7 @@ spec = do
           {
             "type": "binary_op",
             "operator": "equal",
-            "column": { "path": [], "name": "my_column_name" },
+            "column": { "name": "my_column_name" },
             "value": {"type": "scalar", "value": "scalar value"}
           }
         |]
@@ -153,7 +199,7 @@ spec = do
           {
             "type": "binary_arr_op",
             "operator": "in",
-            "column": { "path": [], "name": "my_column_name" },
+            "column": { "name": "my_column_name" },
             "values": ["scalar value"]
           }
         |]
@@ -165,7 +211,7 @@ spec = do
           {
             "type": "unary_op",
             "operator": "is_null",
-            "column": { "path": [], "name": "my_column_name" }
+            "column": { "name": "my_column_name" }
           }
         |]
 
@@ -175,28 +221,32 @@ genBinaryComparisonOperator :: MonadGen m => m BinaryComparisonOperator
 genBinaryComparisonOperator =
   Gen.choice
     [ Gen.element [LessThan, LessThanOrEqual, GreaterThan, GreaterThanOrEqual, Equal],
-      CustomBinaryComparisonOperator <$> Gen.text (linear 0 5) Gen.unicode
+      CustomBinaryComparisonOperator <$> genArbitraryAlphaNumText defaultRange
     ]
 
 genBinaryArrayComparisonOperator :: MonadGen m => m BinaryArrayComparisonOperator
 genBinaryArrayComparisonOperator =
   Gen.choice
     [ pure In,
-      CustomBinaryArrayComparisonOperator <$> Gen.text (linear 0 5) Gen.unicode
+      CustomBinaryArrayComparisonOperator <$> genArbitraryAlphaNumText defaultRange
     ]
 
 genUnaryComparisonOperator :: MonadGen m => m UnaryComparisonOperator
 genUnaryComparisonOperator =
   Gen.choice
     [ pure IsNull,
-      CustomUnaryComparisonOperator <$> Gen.text (linear 0 5) Gen.unicode
+      CustomUnaryComparisonOperator <$> genArbitraryAlphaNumText defaultRange
     ]
 
 genComparisonColumn :: MonadGen m => m ComparisonColumn
 genComparisonColumn =
   ComparisonColumn
-    <$> Gen.list (linear 0 5) genRelationshipName
+    <$> genColumnPath
     <*> genColumnName
+
+genColumnPath :: MonadGen m => m ColumnPath
+genColumnPath =
+  Gen.element [CurrentTable, QueryTable]
 
 genComparisonValue :: MonadGen m => m ComparisonValue
 genComparisonValue =
@@ -205,17 +255,25 @@ genComparisonValue =
       ScalarValue <$> genValue
     ]
 
+genExistsInTable :: MonadGen m => m ExistsInTable
+genExistsInTable =
+  Gen.choice
+    [ RelatedTable <$> genRelationshipName,
+      UnrelatedTable <$> genTableName
+    ]
+
 genExpression :: MonadGen m => m Expression
 genExpression =
   Gen.recursive
     Gen.choice
     [ ApplyBinaryComparisonOperator <$> genBinaryComparisonOperator <*> genComparisonColumn <*> genComparisonValue,
-      ApplyBinaryArrayComparisonOperator <$> genBinaryArrayComparisonOperator <*> genComparisonColumn <*> (Gen.list (linear 0 1) genValue),
+      ApplyBinaryArrayComparisonOperator <$> genBinaryArrayComparisonOperator <*> genComparisonColumn <*> (Gen.list defaultRange genValue),
       ApplyUnaryComparisonOperator <$> genUnaryComparisonOperator <*> genComparisonColumn
     ]
     [ And <$> genExpressions,
       Or <$> genExpressions,
-      Not <$> genExpression
+      Not <$> genExpression,
+      Exists <$> genExistsInTable <*> genExpression
     ]
   where
-    genExpressions = Gen.list (linear 0 1) genExpression
+    genExpressions = Gen.list defaultRange genExpression

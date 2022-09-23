@@ -9,6 +9,7 @@ module Test.Schema.EnumSpec (spec) where
 import Data.Aeson (Value)
 import Data.List.NonEmpty qualified as NE
 import Harness.Backend.Citus qualified as Citus
+import Harness.Backend.Cockroach qualified as Cockroach
 import Harness.Backend.Postgres qualified as Postgres
 import Harness.GraphqlEngine (postGraphql)
 import Harness.Quoter.Graphql (graphql)
@@ -35,6 +36,22 @@ spec =
                     },
                   Postgres.setupTablesAction schema testEnvironment
                 ]
+            },
+          (Fixture.fixture $ Fixture.Backend Fixture.Cockroach)
+            { Fixture.setupTeardown = \(testEnvironment, _) ->
+                [ Fixture.SetupAction
+                    { Fixture.setupAction =
+                        Cockroach.run_ setup,
+                      Fixture.teardownAction = \_ ->
+                        Cockroach.run_ teardown
+                    },
+                  Cockroach.setupTablesAction schema testEnvironment
+                ],
+              Fixture.customOptions =
+                Just $
+                  Fixture.defaultOptions
+                    { Fixture.stringifyNumbers = True
+                    }
             },
           (Fixture.fixture $ Fixture.Backend Fixture.Citus)
             { Fixture.setupTeardown = \(testEnvironment, _) ->
@@ -64,7 +81,8 @@ schema =
               Schema.TCustomType
                 Schema.defaultBackendScalarType
                   { Schema.bstCitus = Just "role",
-                    Schema.bstPostgres = Just "role"
+                    Schema.bstPostgres = Just "role",
+                    Schema.bstCockroach = Just "role"
                   }
           ],
         tablePrimaryKey = ["id"],
