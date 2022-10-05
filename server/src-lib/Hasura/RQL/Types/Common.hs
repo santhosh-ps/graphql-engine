@@ -99,7 +99,7 @@ fromRemoteRelationship = FieldName . relNameToTxt
 data RelType
   = ObjRel
   | ArrRel
-  deriving (Show, Eq, Generic, Data)
+  deriving (Show, Eq, Ord, Generic, Data)
 
 instance NFData RelType
 
@@ -260,7 +260,8 @@ isSystemDefined = unSystemDefined
 data SQLGenCtx = SQLGenCtx
   { stringifyNum :: Options.StringifyNumbers,
     dangerousBooleanCollapse :: Options.DangerouslyCollapseBooleans,
-    optimizePermissionFilters :: Options.OptimizePermissionFilters
+    optimizePermissionFilters :: Options.OptimizePermissionFilters,
+    bigqueryStringNumericInput :: Options.BigQueryStringNumericInput
   }
   deriving (Show, Eq)
 

@@ -55,7 +55,7 @@ runCreateRelationship relType (WithTable source tableName relDef) = do
   let relName = _rdName relDef
   -- Check if any field with relationship name already exists in the table
   tableFields <- _tciFieldInfoMap <$> askTableCoreInfo @b source tableName
-  onJust (Map.lookup (fromRel relName) tableFields) $
+  for_ (Map.lookup (fromRel relName) tableFields) $
     const $
       throw400 AlreadyExists $
         "field with name " <> relName <<> " already exists in table " <>> tableName
@@ -313,7 +313,7 @@ purgeRelDep (SOSourceObj _ exists)
     pure $ dropPermissionInMetadata rn pt
 purgeRelDep d =
   throw500 $
-    "unexpected dependency of relationship : "
+    "unexpected dependency of relationship: "
       <> reportSchemaObj d
 
 --------------------------------------------------------------------------------

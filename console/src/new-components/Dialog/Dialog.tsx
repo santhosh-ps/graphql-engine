@@ -1,4 +1,5 @@
 import React from 'react';
+import clsx from 'clsx';
 import * as RadixDialog from '@radix-ui/react-dialog';
 import { FaTimes } from 'react-icons/fa';
 import { Button } from '../Button/Button';
@@ -46,6 +47,15 @@ const Backdrop = () => (
   <RadixDialog.Overlay className="fixed top-0 left-0 h-full w-full bg-gray-900/90 backdrop-blur-sm z-[100]" />
 );
 
+type DialogSize = 'sm' | 'md' | 'lg' | 'xl';
+
+const dialogSizing: Record<DialogSize, string> = {
+  sm: 'max-w-xl',
+  md: 'max-w-2xl',
+  lg: 'max-w-3xl',
+  xl: 'max-w-4xl',
+};
+
 export type DialogProps = {
   children: string | React.ReactElement;
   title: string;
@@ -53,6 +63,7 @@ export type DialogProps = {
   hasBackdrop: boolean;
   onClose?: () => void;
   footer?: FooterProps | React.ReactElement;
+  size?: DialogSize;
 };
 
 export const Dialog = ({
@@ -62,10 +73,16 @@ export const Dialog = ({
   description,
   onClose,
   footer,
+  size = 'md',
 }: DialogProps) => (
   <RadixDialog.Root open>
     {hasBackdrop && <Backdrop />}
-    <RadixDialog.Content className="fixed transform -translate-x-2/4 left-2/4 mt-lg top-0 w-full h-auto max-w-2xl bg-gray-50 rounded overflow-hidden shadow-lg z-[101]">
+    <RadixDialog.Content
+      className={clsx(
+        `fixed transform -translate-x-2/4 left-2/4 mt-lg top-0 w-full h-auto  bg-gray-50 rounded overflow-hidden shadow-lg z-[101]`,
+        dialogSizing[size]
+      )}
+    >
       {onClose && (
         <RadixDialog.Close className="fixed right-3 top-3">
           <FaTimes

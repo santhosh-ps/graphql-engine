@@ -142,6 +142,7 @@ import Hasura.Server.Types
 import Hasura.Server.Version
 import Hasura.Session
 import Hasura.Tracing qualified as Tracing
+import Network.HTTP.Client.Blocklisting (Blocklist)
 import Network.HTTP.Client.CreateManager (mkHttpManager)
 import Network.HTTP.Client.Manager (HasHttpManagerM (..))
 import Network.HTTP.Client.Transformable qualified as HTTP
@@ -365,7 +366,11 @@ initialiseServeCtx env GlobalCtx {..} so@ServeOptions {..} serverMetrics = do
       optimizePermissionFilters
         | EFOptimizePermissionFilters `elem` soExperimentalFeatures = Options.OptimizePermissionFilters
         | otherwise = Options.Don'tOptimizePermissionFilters
-      sqlGenCtx = SQLGenCtx soStringifyNum soDangerousBooleanCollapse optimizePermissionFilters
+
+      bigqueryStringNumericInput
+        | EFBigQueryStringNumericInput `elem` soExperimentalFeatures = Options.EnableBigQueryStringNumericInput
+        | otherwise = Options.DisableBigQueryStringNumericInput
+      sqlGenCtx = SQLGenCtx soStringifyNum soDangerousBooleanCollapse optimizePermissionFilters bigqueryStringNumericInput
 
   let serverConfigCtx =
         ServerConfigCtx
@@ -378,7 +383,6 @@ initialiseServeCtx env GlobalCtx {..} so@ServeOptions {..} serverMetrics = do
           soReadOnlyMode
           soDefaultNamingConvention
 
-  schemaCacheHttpManager <- liftIO $ HTTP.newManager HTTP.tlsManagerSettings
   rebuildableSchemaCache <-
     lift . flip onException (flushLogger loggerCtx) $
       migrateCatalogSchema
@@ -386,7 +390,7 @@ initialiseServeCtx env GlobalCtx {..} so@ServeOptions {..} serverMetrics = do
         logger
         metadataDbPool
         maybeDefaultSourceConfig
-        schemaCacheHttpManager
+        mempty
         serverConfigCtx
         (mkPgSourceResolver pgLogger)
         mkMSSQLSourceResolver
@@ -436,7 +440,7 @@ migrateCatalogSchema ::
   Logger Hasura ->
   PG.PGPool ->
   Maybe (SourceConnConfiguration ('Postgres 'Vanilla)) ->
-  HTTP.Manager ->
+  Blocklist ->
   ServerConfigCtx ->
   SourceResolver ('Postgres 'Vanilla) ->
   SourceResolver ('MSSQL) ->
@@ -447,7 +451,7 @@ migrateCatalogSchema
   logger
   pool
   defaultSourceConfig
-  httpManager
+  blockList
   serverConfigCtx
   pgSourceResolver
   mssqlSourceResolver
@@ -464,6 +468,8 @@ migrateCatalogSchema
             extensionsSchema
             (_sccMaintenanceMode serverConfigCtx)
             currentTime
+      let tlsAllowList = networkTlsAllowlist $ _metaNetwork metadata
+      httpManager <- liftIO $ mkHttpManager (pure tlsAllowList) blockList
       let cacheBuildParams =
             CacheBuildParams httpManager pgSourceResolver mssqlSourceResolver serverConfigCtx
           buildReason = CatalogSync
@@ -591,7 +597,7 @@ runHGEServer setupHook env serveOptions serveCtx initTime postPollHook serverMet
           . Warp.setHost (soHost serveOptions)
           . Warp.setGracefulShutdownTimeout (Just 30) -- 30s graceful shutdown
           . Warp.setInstallShutdownHandler shutdownHandler
-          . Warp.setBeforeMainLoop (onJust startupStatusHook id)
+          . Warp.setBeforeMainLoop (for_ startupStatusHook id)
           . setForkIOWithMetrics
           $ Warp.defaultSettings
 
@@ -677,7 +683,12 @@ mkHGEServer setupHook env ServeOptions {..} ServeCtx {..} initTime postPollHook 
   let optimizePermissionFilters
         | EFOptimizePermissionFilters `elem` soExperimentalFeatures = Options.OptimizePermissionFilters
         | otherwise = Options.Don'tOptimizePermissionFilters
-      sqlGenCtx = SQLGenCtx soStringifyNum soDangerousBooleanCollapse optimizePermissionFilters
+
+      bigqueryStringNumericInput
+        | EFBigQueryStringNumericInput `elem` soExperimentalFeatures = Options.EnableBigQueryStringNumericInput
+        | otherwise = Options.DisableBigQueryStringNumericInput
+
+      sqlGenCtx = SQLGenCtx soStringifyNum soDangerousBooleanCollapse optimizePermissionFilters bigqueryStringNumericInput
       Loggers loggerCtx logger _ = _scLoggers
 
   authModeRes <-
@@ -706,6 +717,7 @@ mkHGEServer setupHook env ServeOptions {..} ServeCtx {..} initTime postPollHook 
           soCorsConfig
           soEnableConsole
           soConsoleAssetsDir
+          soConsoleSentryDsn
           soEnableTelemetry
           _scInstanceId
           soEnabledAPIs
@@ -850,9 +862,9 @@ mkHGEServer setupHook env ServeOptions {..} ServeCtx {..} initTime postPollHook 
         AB.dispatchAnyBackend @BackendEventTrigger backendSourceInfo \(SourceInfo sourceName _ _ sourceConfig _ _ :: SourceInfo b) -> do
           let sourceNameText = sourceNameToText sourceName
           logger $ mkGenericLog LevelInfo "event_triggers" $ "unlocking events of source: " <> sourceNameText
-          onJust (HM.lookup sourceName lockedEvents) $ \sourceLockedEvents -> do
+          for_ (HM.lookup sourceName lockedEvents) $ \sourceLockedEvents -> do
             -- No need to execute unlockEventsTx when events are not present
-            onJust (NE.nonEmptySet sourceLockedEvents) $ \nonEmptyLockedEvents -> do
+            for_ (NE.nonEmptySet sourceLockedEvents) $ \nonEmptyLockedEvents -> do
               res <- Retry.retrying Retry.retryPolicyDefault isRetryRequired (return $ unlockEventsInSource @b sourceConfig nonEmptyLockedEvents)
               case res of
                 Left err ->
@@ -1065,8 +1077,8 @@ instance (Monad m) => MonadMetadataApiAuthorization (PGMetadataStorageAppT m) wh
       withPathK "args" $ throw400 AccessDenied accessDeniedErrMsg
 
 instance (Monad m) => ConsoleRenderer (PGMetadataStorageAppT m) where
-  renderConsole path authMode enableTelemetry consoleAssetsDir =
-    return $ mkConsoleHTML path authMode enableTelemetry consoleAssetsDir
+  renderConsole path authMode enableTelemetry consoleAssetsDir consoleSentryDsn =
+    return $ mkConsoleHTML path authMode enableTelemetry consoleAssetsDir consoleSentryDsn
 
 instance (Monad m) => MonadGQLExecutionCheck (PGMetadataStorageAppT m) where
   checkGQLExecution userInfo _ enableAL sc query _ = runExceptT $ do
@@ -1199,8 +1211,8 @@ instance MonadMetadataStorageQueryAPI (MetadataStorageT (PGMetadataStorageAppT C
 
 --- helper functions ---
 
-mkConsoleHTML :: Text -> AuthMode -> Bool -> Maybe Text -> Either String Text
-mkConsoleHTML path authMode enableTelemetry consoleAssetsDir =
+mkConsoleHTML :: Text -> AuthMode -> Bool -> Maybe Text -> Maybe Text -> Either String Text
+mkConsoleHTML path authMode enableTelemetry consoleAssetsDir consoleSentryDsn =
   renderHtmlTemplate consoleTmplt $
     -- variables required to render the template
     A.object
@@ -1208,6 +1220,7 @@ mkConsoleHTML path authMode enableTelemetry consoleAssetsDir =
         "consolePath" A..= consolePath,
         "enableTelemetry" A..= boolToText enableTelemetry,
         "cdnAssets" A..= boolToText (isNothing consoleAssetsDir),
+        "consoleSentryDsn" A..= fromMaybe "" consoleSentryDsn,
         "assetsVersion" A..= consoleAssetsVersion,
         "serverVersion" A..= currentVersion,
         "consoleSentryDsn" A..= ("" :: Text)

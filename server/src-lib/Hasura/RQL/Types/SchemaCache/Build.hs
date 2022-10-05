@@ -23,7 +23,7 @@ module Hasura.RQL.Types.SchemaCache.Build
     buildSchemaCacheWithInvalidations,
     buildSchemaCache,
     buildSchemaCacheFor,
-    buildSchemaCacheStrict,
+    throwOnInconsistencies,
     withNewInconsistentObjsCheck,
     getInconsistentQueryCollections,
   )
@@ -39,6 +39,7 @@ import Data.HashMap.Strict.Extended qualified as Map
 import Data.HashMap.Strict.InsOrd qualified as OMap
 import Data.HashMap.Strict.Multi qualified as MultiMap
 import Data.List qualified as L
+import Data.List.Extended qualified as L
 import Data.Sequence qualified as Seq
 import Data.Text.Extended
 import Data.Text.NonEmpty (unNonEmptyText)
@@ -313,10 +314,9 @@ buildSchemaCacheFor objectId metadataModifier = do
         { qeInternal = Just $ ExtraInternal $ toJSON (L.nub . concatMap toList $ Map.elems newInconsistentObjects)
         }
 
--- | Like 'buildSchemaCache', but fails if there is any inconsistent metadata.
-buildSchemaCacheStrict :: (QErrM m, CacheRWM m, MetadataM m) => m ()
-buildSchemaCacheStrict = do
-  buildSchemaCache mempty
+-- | Requests the schema cache, and fails if there is any inconsistent metadata.
+throwOnInconsistencies :: (QErrM m, CacheRWM m) => m ()
+throwOnInconsistencies = do
   sc <- askSchemaCache
   let inconsObjs = scInconsistentObjs sc
   unless (null inconsObjs) $ do
@@ -333,7 +333,7 @@ withNewInconsistentObjsCheck action = do
 
   let diffInconsistentObjects = Map.difference `on` groupInconsistentMetadataById
       newInconsistentObjects =
-        hashNub $ concatMap toList $ Map.elems (currentObjects `diffInconsistentObjects` originalObjects)
+        L.uniques $ concatMap toList $ Map.elems (currentObjects `diffInconsistentObjects` originalObjects)
   unless (null newInconsistentObjects) $
     throwError
       (err500 Unexpected "cannot continue due to newly found inconsistent metadata")

@@ -7,6 +7,8 @@ module Hasura.GraphQL.Schema.Options
     InferFunctionPermissions (..),
     RemoteSchemaPermissions (..),
     OptimizePermissionFilters (..),
+    IncludeUpdateManyFields (..),
+    BigQueryStringNumericInput (..),
   )
 where
 
@@ -19,7 +21,9 @@ data SchemaOptions = SchemaOptions
   { soStringifyNumbers :: StringifyNumbers,
     soDangerousBooleanCollapse :: DangerouslyCollapseBooleans,
     soInferFunctionPermissions :: InferFunctionPermissions,
-    soOptimizePermissionFilters :: OptimizePermissionFilters
+    soOptimizePermissionFilters :: OptimizePermissionFilters,
+    soIncludeUpdateManyFields :: IncludeUpdateManyFields,
+    soBigQueryStringNumericInput :: BigQueryStringNumericInput
   }
 
 -- | Should we represent numbers in our responses as numbers, or strings?
@@ -29,6 +33,14 @@ data SchemaOptions = SchemaOptions
 data StringifyNumbers
   = StringifyNumbers
   | Don'tStringifyNumbers
+  deriving (Eq, Show)
+
+-- | Should we include `TABLE_updates` fields in schemas
+-- This is a toggle so that users can opt-in, and so that we can rename
+-- any tables that this may conflict with if needed
+data IncludeUpdateManyFields
+  = IncludeUpdateManyFields
+  | DontIncludeUpdateManyFields
   deriving (Eq, Show)
 
 -- | Should Boolean fields be collapsed to 'True' when a null value is
@@ -95,4 +107,10 @@ instance ToJSON RemoteSchemaPermissions where
 data OptimizePermissionFilters
   = OptimizePermissionFilters
   | Don'tOptimizePermissionFilters
+  deriving (Eq, Show)
+
+-- | Should we enable string-accepting scalar parsers for BigQuery sources
+data BigQueryStringNumericInput
+  = EnableBigQueryStringNumericInput
+  | DisableBigQueryStringNumericInput
   deriving (Eq, Show)

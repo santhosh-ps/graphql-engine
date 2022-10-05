@@ -56,6 +56,7 @@ import Hasura.GraphQL.Schema.Parser
     MonadParse,
     Parser,
     memoize,
+    memoizeOn,
     type (<:),
   )
 import Hasura.GraphQL.Schema.Parser qualified as P
@@ -341,6 +342,8 @@ pgkBuildTableUpdateMutationFields ::
   C.GQLNameIdentifier ->
   SchemaT r m [FieldParser n (IR.AnnotatedUpdateG ('Postgres pgKind) (RemoteRelationshipField IR.UnpreparedValue) (IR.UnpreparedValue ('Postgres pgKind)))]
 pgkBuildTableUpdateMutationFields mkRootFieldName scenario sourceInfo tableName tableInfo gqlName = do
+  -- check in schema options whether we should include multiple updates field
+  Options.SchemaOptions {soIncludeUpdateManyFields} <- retrieve id
   roleName <- retrieve scRole
   concat . maybeToList <$> runMaybeT do
     updatePerms <- hoistMaybe $ _permUpd $ getRolePermInfo roleName tableInfo
@@ -366,7 +369,13 @@ pgkBuildTableUpdateMutationFields mkRootFieldName scenario sourceInfo tableName 
           tableInfo
           gqlName
 
-      pure $ singleUpdates ++ maybeToList multiUpdate
+      -- we only include the multiUpdate field if the
+      -- experimental feature 'hide_update_many_fields' is off
+      pure $ case soIncludeUpdateManyFields of
+        Options.IncludeUpdateManyFields ->
+          singleUpdates ++ maybeToList multiUpdate
+        Options.DontIncludeUpdateManyFields ->
+          singleUpdates
 
 -- | Create a parser for 'update_table_many'. This function is very similar to
 -- both 'GSB.buildTableUpdateMutationFields' and
@@ -471,42 +480,42 @@ columnParser ::
   ColumnType ('Postgres pgKind) ->
   G.Nullability ->
   SchemaT r m (Parser 'Both n (IR.ValueWithOrigin (ColumnValue ('Postgres pgKind))))
-columnParser columnType nullability =
-  -- TODO(PDV): It might be worth memoizing this function even though it isn’t
-  -- recursive simply for performance reasons, since it’s likely to be hammered
-  -- during schema generation. Need to profile to see whether or not it’s a win.
-  peelWithOrigin . fmap (ColumnValue columnType) <$> case columnType of
-    ColumnScalar scalarType ->
-      possiblyNullable scalarType nullability <$> do
-        -- We convert the value to JSON and use the FromJSON instance. This avoids
-        -- having two separate ways of parsing a value in the codebase, which
-        -- could lead to inconsistencies.
-        --
-        -- The mapping from postgres type to GraphQL scalar name is done by
-        -- 'mkScalarTypeName'. This is confusing, and we might want to fix it
-        -- later, as we will parse values differently here than how they'd be
-        -- parsed in other places using the same scalar name; for instance, we
-        -- will accept strings for postgres columns of type "Integer", despite the
-        -- fact that they will be represented as GraphQL ints, which otherwise do
-        -- not accept strings.
-        --
-        -- TODO: introduce new dedicated scalars for Postgres column types.
-        name <- mkScalarTypeName scalarType
-        let schemaType = P.TNamed P.NonNullable $ P.Definition name Nothing Nothing [] P.TIScalar
-        pure $
-          P.Parser
-            { pType = schemaType,
-              pParser =
-                P.valueToJSON (P.toGraphQLType schemaType) >=> \case
-                  J.Null -> P.parseError $ "unexpected null value for type " <> toErrorValue name
-                  value ->
-                    runAesonParser (parsePGValue scalarType) value
-                      `onLeft` (P.parseErrorWith P.ParseFailed . toErrorMessage . qeError)
-            }
-    ColumnEnumReference (EnumReference tableName enumValues tableCustomName) ->
-      case nonEmpty (Map.toList enumValues) of
-        Just enumValuesList -> enumParser @pgKind tableName enumValuesList tableCustomName nullability
-        Nothing -> throw400 ValidationFailed "empty enum values"
+columnParser columnType nullability = case columnType of
+  ColumnScalar scalarType -> memoizeOn 'columnParser (scalarType, nullability) do
+    -- We convert the value to JSON and use the FromJSON instance. This avoids
+    -- having two separate ways of parsing a value in the codebase, which
+    -- could lead to inconsistencies.
+    --
+    -- The mapping from postgres type to GraphQL scalar name is done by
+    -- 'mkScalarTypeName'. This is confusing, and we might want to fix it
+    -- later, as we will parse values differently here than how they'd be
+    -- parsed in other places using the same scalar name; for instance, we
+    -- will accept strings for postgres columns of type "Integer", despite the
+    -- fact that they will be represented as GraphQL ints, which otherwise do
+    -- not accept strings.
+    --
+    -- TODO: introduce new dedicated scalars for Postgres column types.
+    name <- mkScalarTypeName scalarType
+    let schemaType = P.TNamed P.NonNullable $ P.Definition name Nothing Nothing [] P.TIScalar
+    pure $
+      peelWithOrigin $
+        fmap (ColumnValue columnType) $
+          possiblyNullable scalarType nullability $
+            P.Parser
+              { pType = schemaType,
+                pParser =
+                  P.valueToJSON (P.toGraphQLType schemaType) >=> \case
+                    J.Null -> P.parseError $ "unexpected null value for type " <> toErrorValue name
+                    value ->
+                      runAesonParser (parsePGValue scalarType) value
+                        `onLeft` (P.parseErrorWith P.ParseFailed . toErrorMessage . qeError)
+              }
+  ColumnEnumReference (EnumReference tableName enumValues tableCustomName) ->
+    case nonEmpty (Map.toList enumValues) of
+      Just enumValuesList ->
+        peelWithOrigin . fmap (ColumnValue columnType)
+          <$> enumParser @pgKind tableName enumValuesList tableCustomName nullability
+      Nothing -> throw400 ValidationFailed "empty enum values"
 
 enumParser ::
   forall pgKind r m n.
